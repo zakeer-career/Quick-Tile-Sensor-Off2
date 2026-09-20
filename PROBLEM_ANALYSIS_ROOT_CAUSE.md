@@ -76,6 +76,8 @@ This document serves as the canonical technical post-mortem and engineering anal
 6. **Continuous Integration & Release APK Synchronization**:
    - Updated GitHub Actions workflow (`build-apk.yml`) to execute `gradle :app:testDebugUnitTest` on every push/PR before assembling release APKs.
    - Configured automated release publishing to build and package version-tagged debug APK artifacts directly matching repository commits.
+7. **Robolectric Target SDK Alignment**:
+   - Configured Robolectric tests (`ExampleRobolectricTest`, `GreetingScreenshotTest`, and `robolectric.properties`) to use `sdk = [34]` (Android 14) to prevent `DefaultSdkProvider` unsupported SDK 36 exceptions in CI runners while maintaining runtime `compileSdk 36`.
 
 ---
 

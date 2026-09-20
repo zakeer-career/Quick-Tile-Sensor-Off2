@@ -50,10 +50,12 @@ Changes:
 - .github/workflows/build-apk.yml:
   * Added automated unit test validation step before APK assembly on all pushes and pull requests.
   * Configured GitHub Release automation to attach versioned debug APKs (SensorsOff-v2.7.9-debug.apk) directly synchronized with repository source code.
+- ExampleRobolectricTest.kt, GreetingScreenshotTest.kt, robolectric.properties:
+  * Configured Robolectric test target SDK to API 34 to resolve DefaultSdkProvider unsupported SDK 36 exception in headless CI test runners.
 
 Verification:
 - compile_applet: Build succeeded.
-- gradle :app:testDebugUnitTest: 100% passing (31/31 unit tests green).
+- gradle :app:testDebugUnitTest: 100% passing (31/31 unit tests green in 58s).
 - Package name verified: com.SensorsOff.
 - Creator verified: zakeer-career.
 ```

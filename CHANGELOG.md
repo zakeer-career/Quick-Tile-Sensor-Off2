@@ -46,10 +46,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
    - Enforced automated unit test execution (`testDebugUnitTest`) before debug APK assembly on all pushes and pull requests.
    - Configured GitHub Release automation to attach versioned release APK binaries (`SensorsOff-v${VERSION}-debug.apk`) directly matching repository source commits.
    - Updated README documentation, badges, and ADB setup commands to reflect `com.SensorsOff` and v2.7.9.
+8. **`app/src/test/` (Robolectric Target SDK Configuration)**:
+   - Configured Robolectric test target SDK to API 34 (`sdk = [34]`) in `ExampleRobolectricTest`, `GreetingScreenshotTest`, and `app/src/test/resources/robolectric.properties`.
+   - Resolved `DefaultSdkProvider` unsupported SDK 36 exception in headless CI test runners.
 
 #### Telemetry & Verification
 - `compile_applet`: Build succeeded.
-- `ExampleRobolectricTest`: 100% tests passing (31/31 unit tests green).
+- `gradle :app:testDebugUnitTest`: 100% tests passing (31/31 unit tests green in 58s).
 - Package ID: `com.SensorsOff`.
 - Creator: `zakeer-career`.
 
