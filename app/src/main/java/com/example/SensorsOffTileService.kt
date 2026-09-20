@@ -23,11 +23,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Ultra-optimized Quick Settings Tile Service for SensorsOff.
+ * Optimized Quick Settings Tile Service for SensorsOff.
  * Features:
- * - Synchronous optimistic UI switching (identical to native AOSP developer tile)
- * - Minimal allocations on click via pre-cached Icon and String handles
- * - Real-time ContentObserver for instant reactivity to external system setting changes
+ * - Optimistic UI switching with authoritative hardware state confirmation
+ * - Pre-cached Icon and String handles to minimize allocations
+ * - Real-time ContentObserver for reactivity to external system setting changes
  * - Redundant IPC elimination to preserve QS shade smoothness
  */
 class SensorsOffTileService : TileService() {
@@ -117,8 +117,8 @@ class SensorsOffTileService : TileService() {
 
                 TileLogManager.logTileEvent(
                     applicationContext,
-                    "Tile Toggle Completed",
-                    "Target: $target | Success: $success | IPC Latency: ${elapsedMs}ms | Total: ${System.currentTimeMillis() - clickTime}ms",
+                    if (success) "Tile Toggle Completed" else "Tile Toggle Verification Warning",
+                    "Target: $target | Confirmed Success: $success | Elapsed: ${elapsedMs}ms | Total: ${System.currentTimeMillis() - clickTime}ms",
                     if (success) LogLevel.SUCCESS else LogLevel.WARN,
                     executionMs = elapsedMs
                 )
@@ -151,7 +151,9 @@ class SensorsOffTileService : TileService() {
         super.onDestroy()
         try {
             contentResolver.unregisterContentObserver(settingsObserver)
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.d(TAG, "ContentObserver unregister note: ${e.message}")
+        }
         TileLogManager.logTileEvent(
             applicationContext,
             "Tile Service Destroyed",
@@ -258,7 +260,13 @@ class SensorsOffTileService : TileService() {
             } else {
                 val globalVal = try {
                     Settings.Global.getInt(applicationContext.contentResolver, "sensors_off", -1)
-                } catch (e: Exception) { -1 }
+                } catch (e: SecurityException) {
+                    Log.d(TAG, "Settings.Global security note: ${e.message}")
+                    -1
+                } catch (e: Exception) {
+                    Log.d(TAG, "Settings.Global read note: ${e.message}")
+                    -1
+                }
                 if (globalVal != -1) {
                     globalVal == 1
                 } else {

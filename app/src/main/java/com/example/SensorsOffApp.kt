@@ -25,7 +25,7 @@ class SensorsOffApp : Application() {
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 ShizukuManager.refreshRootState()
             }
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             Log.e("SensorsOffApp", "Failed during application initialization", e)
         }
     }

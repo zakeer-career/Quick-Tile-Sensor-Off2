@@ -193,7 +193,7 @@ object TileLogManager {
             }
 
             _logsFlow.value = list
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             Log.e(TAG, "Failed to load telemetry logs", e)
         }
     }
@@ -235,7 +235,7 @@ object TileLogManager {
                     .putString(KEY_PERSISTED_LOGS, array.toString())
                     .putString(KEY_LAST_TILE_DIAGNOSTICS, diagObj.toString())
                     .apply()
-            } catch (e: Throwable) {
+            } catch (e: Exception) {
                 Log.w(TAG, "Failed to persist logs: ${e.message}")
             }
         }

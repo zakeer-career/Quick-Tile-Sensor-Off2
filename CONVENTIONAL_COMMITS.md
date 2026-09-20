@@ -14,35 +14,49 @@ Each commit entry includes:
 ### [v2.7.8] - 2026-09-20
 
 ```git
-refactor(security): harden sensor privacy ipc, state sync, and purge legacy battery artifacts
+refactor(security): harden sensor privacy ipc, shell process execution, authoritative state sync, and purge legacy artifacts
 
 Problem:
-1. Residual battery optimization and notification permissions lingered from legacy foreground daemon.
-2. Direct ISensorPrivacyManager Binder transaction codes were defined as ad-hoc magic numbers across fallback branches.
-3. Rapid clicks on Quick Settings tile could create redundant background process executions.
-4. UI copy contained unverified "0ms" response claims.
+1. Shell command execution previously returned unstructured string outputs and lacked threaded stream consumption, risking pipe buffer deadlocks.
+2. Direct ISensorPrivacyManager Binder transaction codes were defined as ad-hoc magic numbers across fallback branches with generic/empty exception handling.
+3. Rapid clicks on Quick Settings tile could create competing background process executions without mutual exclusion.
+4. Unused dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck) bloated compilation times and APK size.
+5. LOCKED_BOOT_COMPLETED receiver ran before device credential unlock.
 
 Root Cause:
-1. Incomplete cleanup of battery optimization exemption code and lack of centralized AIDL transaction code repository.
-2. Quick Settings tile lacked coalesced tap queueing with authoritative post-toggle hardware state verification.
+1. Synchronous stream consumption in Process.waitFor() patterns and lack of structured CommandResult wrapping.
+2. Incomplete exception categorization and lack of explicit reentrant locks during hardware state modification.
+3. Lingering build.gradle.kts dependencies from initial templates.
 
 Changes:
-- SensorPrivacyCodes.kt: Centralized AIDL transaction codes across Android S (31+), R (30), and Q (29).
-- ShizukuManager.kt: Hardened IPC error handling (SecurityException, RemoteException), integrated SensorPrivacyCodes, improved root process cleanup.
-- SensorsOffTileService.kt: Coalesced rapid clicks in channel worker, authoritative state re-check after toggle, sanitized logging copy.
-- BootCompletedReceiver.kt: Hardened exception handling for boot-time triggers.
-- MainActivity.kt: Removed battery exemption UI and REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, updated icons to AutoMirrored, aligned copy.
-- AndroidManifest.xml: Purged POST_NOTIFICATIONS and REQUEST_IGNORE_BATTERY_OPTIMIZATIONS.
-- ExampleRobolectricTest.kt: Added tests for tile configuration defaults and telemetry log persistence.
-- app/build.gradle.kts: Set versionCode 35, versionName 2.7.8.
+- ShizukuManager.kt:
+  * Introduced CommandResult data class with exitCode, stdout, stderr, and success properties.
+  * Refactored runShizukuCommand and runRootCommand with threaded stdout/stderr consumption and timeout-bound process destruction.
+  * Added stateOperationLock ReentrantLock to serialize state toggle operations.
+  * Added validateSensorPrivacyInterface() to confirm Binder liveness before invoking transactions.
+  * Enhanced setSensorsOffState, setIndividualSensorState, and setCamMicSensorState with authoritative read-back verification and SharedPreferences synchronization.
+  * Centralized Binder transaction codes in SensorPrivacyCodes / SensorPrivacyTransactions.
+  * Eliminated all empty catch blocks and generic catch (Throwable).
+- SensorsOffTileService.kt:
+  * Coalesced rapid clicks in channel worker loop.
+  * Authoritative state re-check after toggle before updating QS tile UI.
+  * Replaced catch (Throwable) with specific catch blocks and sanitized logging copy.
+- BootCompletedReceiver.kt & AndroidManifest.xml:
+  * Removed LOCKED_BOOT_COMPLETED filter to respect credential encrypted storage.
+  * Purged POST_NOTIFICATIONS and REQUEST_IGNORE_BATTERY_OPTIMIZATIONS.
+- app/build.gradle.kts:
+  * Commented out unused dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck).
+- ExampleRobolectricTest.kt:
+  * Added Robolectric tests covering Shizuku failure resilience, CommandResult data contract, SensorPrivacyCodes validation, read-back verification, and concurrent rapid-tap thread safety.
 
 Verification:
 - compile_applet: Succeeded.
-- gradle :app:testDebugUnitTest: Succeeded (100% tests green).
-- SensorsOffBackgroundService: 0 occurrences.
-- startForeground(: 0 occurrences.
+- gradle :app:testDebugUnitTest: Succeeded (100% tests green, 31 tasks executed).
+- SensorsOffBackgroundService: 0 occurrences across project.
+- startForeground(: 0 occurrences across executable code.
 - FOREGROUND_SERVICE / FOREGROUND_SERVICE_SPECIAL_USE: 0 in AndroidManifest.xml.
 - POST_NOTIFICATIONS / REQUEST_IGNORE_BATTERY_OPTIMIZATIONS: 0 in AndroidManifest.xml.
+- Empty catch blocks / catch (Throwable): 0 across entire codebase.
 - SensorsOffTileService, BootCompletedReceiver, ShizukuManager: Verified present and robust.
 ```
 

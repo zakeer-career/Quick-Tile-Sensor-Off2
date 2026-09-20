@@ -41,41 +41,50 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ---
 
-### [v2.7.8] - Production-Hardening Pass: Sensor Privacy IPC Robustness, Authoritative State Sync & Zero-Daemon Safety
+### [v2.7.8] - Production-Hardening Pass: Sensor Privacy IPC Robustness, Shell Process Hardening, Authoritative State Sync & Zero-Daemon Safety
 
 #### Problem Analysis
-- **Unused POST_NOTIFICATIONS & REQUEST_IGNORE_BATTERY_OPTIMIZATIONS**:
+- **Unused POST_NOTIFICATIONS, REQUEST_IGNORE_BATTERY_OPTIMIZATIONS & LOCKED_BOOT_COMPLETED**:
   - Following the complete eradication of `SensorsOffBackgroundService`, legacy permissions and battery exemption UI elements remained in the app.
   - Requesting notification permissions and battery exemptions on a pure on-demand Quick Settings tile created unnecessary Play Policy and privacy scrutiny.
-- **AIDL Transaction Code Fragility**:
+  - `LOCKED_BOOT_COMPLETED` triggered before device Credential Encrypted (CE) storage was unlocked, causing premature receiver invocations.
+- **AIDL Transaction Code Fragility & Exception Masking**:
   - Raw Binder transaction codes for `ISensorPrivacyManager` were scattered as ad-hoc magic numbers across fallback branches, risking transaction code collisions across different Android API releases (Android 10 Q, Android 11 R, Android 12+ S).
+  - Broad `catch (Throwable)` and empty `catch` blocks silently swallowed critical IPC and security errors.
+- **Shell Process Output Blindness & Buffer Deadlocks**:
+  - Shell command execution methods (`runShizukuCommand`, `runRootCommand`) did not capture process exit codes or stderr independently, and consumed input streams synchronously after `waitFor()`, which risked pipe buffer saturation deadlocks.
 - **Concurrency & Rapid QS Tap Race Conditions**:
-  - Rapidly tapping the Quick Settings tile could enqueue overlapping background tasks, leading to out-of-order execution or state desynchronization.
+  - Rapidly tapping the Quick Settings tile could enqueue overlapping background tasks, leading to out-of-order execution or state desynchronization without hardware-level mutual exclusion.
 - **Authoritative Tile Verification**:
   - Quick Settings tile updates required verified state reconciliation by querying `ISensorPrivacyManager` after toggle completion to avoid UI-hardware drift.
+- **Dependency Bloat**:
+  - Initial project template dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck) lingered in `build.gradle.kts`, increasing APK payload and build times.
 
 #### Root Cause
-- Decentralized AIDL transaction code definitions, lack of rapid-tap coalescing in tile worker coroutines, and lingering battery exemption artifacts from earlier daemon architectures.
+- Decentralized AIDL transaction code definitions, lack of thread synchronization during state mutations, unbuffered synchronous process pipe handling, and legacy build dependencies left over from initial prototyping.
 
 #### Engineered Resolution & Impact
-1. **AIDL Transaction Centralization**:
+1. **Structured Shell Execution with Asynchronous Stream Draining**:
+   - Introduced `CommandResult` data class exposing `success: Boolean`, `exitCode: Int`, `stdout: String`, and `stderr: String`.
+   - Re-engineered `runShizukuCommand` and `runRootCommand` with separate daemon threads consuming stdout and stderr concurrently with `waitFor(timeoutMs, TimeUnit.MILLISECONDS)`, preventing pipe buffer deadlocks.
+2. **Reentrant State Locking & Authoritative Read-Back Verification**:
+   - Added `stateOperationLock = ReentrantLock()` in `ShizukuManager` guarding all state transitions (`setSensorsOffState`, `setIndividualSensorState`, `setCamMicSensorState`).
+   - Implemented post-toggle read-back verification checking native hardware state against target state and synchronizing SharedPreferences cache.
+   - Added `validateSensorPrivacyInterface()` to proactively confirm Binder liveness before initiating IPC.
+3. **AIDL Transaction Centralization & Exception Safety**:
    - Implemented `SensorPrivacyCodes.kt` centralizing all platform-specific Binder transaction codes across Android S (API 31+), Android R (API 30), and Android Q (API 29) for `setSensorPrivacy`, `isSensorPrivacyEnabled`, `supportsSensorToggle`, and sensor types.
-2. **IPC & Shell Command Hardening**:
-   - Hardened `ShizukuManager` methods (`setSensorsOffState`, `getSensorsOffState`, `setIndividualSensorState`, `getIndividualSensorState`) with targeted exception handling for `SecurityException`, `RemoteException`, and `NoSuchMethodException`.
-   - Hardened root and Shizuku command execution with explicit stream draining and process termination.
-3. **Tile Service Concurrency & Authoritative State Sync**:
+   - Replaced all `catch (Throwable)` and empty `catch` blocks with specific `SecurityException`, `RemoteException`, `IOException`, and structured diagnostic logging.
+4. **Tile Service Concurrency & Authoritative State Sync**:
    - Implemented rapid-click coalescing in `SensorsOffTileService`, collapsing consecutive clicks into the latest intended state.
    - Guaranteed post-toggle authoritative state re-check from system services before finalizing tile UI.
    - Hardened all tile lifecycle callbacks (`onStartListening`, `onStopListening`, `onDestroy`, `onClick`).
-4. **Boot Completed Hardening**:
-   - Hardened `BootCompletedReceiver` with dedicated `SecurityException` handling.
-5. **UI & Manifest Cleanup**:
-   - Purged `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` and battery exemption UI.
-   - Removed `POST_NOTIFICATIONS` from `AndroidManifest.xml`.
-   - Replaced deprecated icon vectors with `Icons.AutoMirrored` variants.
-   - Aligned copy to highlight on-demand architecture without misleading "0ms" claims.
-6. **Automated JVM Test Coverage**:
-   - Added unit tests in `ExampleRobolectricTest.kt` verifying `TileSettingsState` and `TileLogManager` telemetry persistence. All tests execute and pass via Gradle.
+5. **Boot Completed & Manifest Hardening**:
+   - Removed `LOCKED_BOOT_COMPLETED` intent filter from `AndroidManifest.xml` so the receiver runs exclusively after user unlock.
+   - Purged `POST_NOTIFICATIONS` and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
+6. **Dependency Optimization & Pruning**:
+   - Commented out unused dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck) in `app/build.gradle.kts`.
+7. **Comprehensive Robolectric JVM Test Suite**:
+   - Added Robolectric tests in `ExampleRobolectricTest.kt` covering Shizuku failure scenarios, `CommandResult` contracts, `SensorPrivacyCodes` validation, state read-back persistence, and concurrent multi-threaded safety under rapid toggles. All 31 Gradle tasks pass cleanly.
 
 ---
 

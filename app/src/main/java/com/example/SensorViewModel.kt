@@ -130,8 +130,10 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
                 Shizuku.addBinderDeadListener(binderDeadListener)
                 Shizuku.addRequestPermissionResultListener(shizukuPermissionListener)
-            } catch (e: Throwable) {
-                addLog("Shizuku listener note: ${e.message}")
+            } catch (e: SecurityException) {
+                addLog("Shizuku listener security exception: ${e.message}", level = LogLevel.WARN)
+            } catch (e: Exception) {
+                addLog("Shizuku listener note: ${e.message}", level = LogLevel.INFO)
             }
 
             // Register ContentObserver to track real-time global and secure settings changes
@@ -151,11 +153,15 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                     if (uri != null) {
                         try {
                             cr.registerContentObserver(uri, false, contentObserver)
-                        } catch (t: Throwable) {}
+                        } catch (e: SecurityException) {
+                            Log.d("SensorViewModel", "SecurityException registering observer for $uri: ${e.message}")
+                        } catch (e: Exception) {
+                            Log.d("SensorViewModel", "Exception registering observer for $uri: ${e.message}")
+                        }
                     }
                 }
-            } catch (e: Throwable) {
-                // Observer fail safe
+            } catch (e: Exception) {
+                Log.w("SensorViewModel", "ContentObserver registration note: ${e.message}")
             }
 
             // Periodic background sync loop (every 2.5s) to guarantee real-time tile & UI freshness
@@ -179,11 +185,15 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             Shizuku.removeBinderReceivedListener(binderReceivedListener)
             Shizuku.removeBinderDeadListener(binderDeadListener)
             Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener)
-        } catch (e: Throwable) {}
+        } catch (e: Exception) {
+            Log.d("SensorViewModel", "Error unregistering Shizuku listeners: ${e.message}")
+        }
 
         try {
             getApplication<Application>().contentResolver.unregisterContentObserver(contentObserver)
-        } catch (e: Throwable) {}
+        } catch (e: Exception) {
+            Log.d("SensorViewModel", "Error unregistering content observer: ${e.message}")
+        }
     }
 
     fun checkAndRequestShizukuPermission() {
@@ -463,7 +473,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
                 context.startActivity(launchIntent)
             }
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             Log.e("SensorViewModel", "Failed to launch Shizuku: ${e.message}")
         }
     }

@@ -21,13 +21,49 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.InputStreamReader
 import java.lang.reflect.Method
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.locks.ReentrantLock
+
+/**
+ * Structured result of shell command execution (Shizuku or Root).
+ * Exposes process exit codes, stdout, stderr, and timeout status.
+ */
+data class CommandResult(
+    val success: Boolean,
+    val exitCode: Int,
+    val stdout: String,
+    val stderr: String
+) {
+    companion object {
+        fun failure(message: String, exitCode: Int = -1): CommandResult =
+            CommandResult(success = false, exitCode = exitCode, stdout = "", stderr = message)
+    }
+}
 
 /**
  * Centralized Binder Transaction Codes for android.hardware.ISensorPrivacyManager.
- * Derived from Android Open Source Project (AOSP) AIDL specifications across Android 10-15+.
+ *
+ * Compatibility Assumptions:
+ * - ISensorPrivacyManager is an internal Android system service AIDL interface ("android.hardware.ISensorPrivacyManager").
+ * - Transaction codes correspond directly to method declarations in ISensorPrivacyManager.aidl across AOSP versions:
+ *   * Android 12+ (API 31+): setSensorPrivacy is code 9, setToggleSensorPrivacy is code 10,
+ *     isToggleSensorPrivacyEnabled is code 8, isCombinedToggleSensorPrivacyEnabled is code 7,
+ *     isSensorPrivacyEnabled is code 6.
+ *   * Android 11 (API 30): setSensorPrivacy is code 5, isSensorPrivacyEnabled is code 4.
+ *   * Android 10 (API 29): setSensorPrivacy is code 4, isSensorPrivacyEnabled is code 3.
+ *
+ * OEM Divergence & Fallback Behavior:
+ * - Certain OEM ROMs (e.g., Xiaomi HyperOS/MIUI, Samsung OneUI, Transsion HiOS) may re-order internal AIDL methods.
+ * - Because Binder transaction numbers may vary on heavily modified vendor trees:
+ *   1. We attempt the version-preferred transaction code first.
+ *   2. If a RemoteException or failure occurs, we iterate across known alternate version codes.
+ *   3. If direct Binder IPC fails, we fall back to shell commands ('service call sensor_privacy <code...>').
+ *   4. If shell IPC fails, we fall back to Settings.Global/Secure table modification.
+ *   5. Critical: Operations are ONLY considered successful if an authoritative read-back of the sensor state
+ *      matches the requested target state.
  */
-object SensorPrivacyCodes {
+object SensorPrivacyTransactions {
     const val DESCRIPTOR = "android.hardware.ISensorPrivacyManager"
 
     // Setters
@@ -69,6 +105,11 @@ object SensorPrivacyCodes {
     )
 }
 
+/**
+ * Backward compatibility alias for SensorPrivacyTransactions.
+ */
+typealias SensorPrivacyCodes = SensorPrivacyTransactions
+
 object ShizukuManager {
     private const val TAG = "ShizukuManager"
     const val SHIZUKU_REQ_CODE = 1001
@@ -82,6 +123,23 @@ object ShizukuManager {
 
     @Volatile
     private var cachedSensorPrivacyBinder: IBinder? = null
+
+    private val stateOperationLock = ReentrantLock()
+
+    /**
+     * Validates whether the ISensorPrivacyManager Binder interface is active and accessible via Shizuku.
+     */
+    fun validateSensorPrivacyInterface(): Boolean {
+        if (!isShizukuRunning() || !isShizukuAuthorized()) {
+            return false
+        }
+        val binder = getSensorPrivacyBinder()
+        val isValid = binder != null && binder.isBinderAlive
+        if (!isValid) {
+            Log.w(TAG, "Sensor privacy binder interface is not valid or not alive")
+        }
+        return isValid
+    }
 
     private val binderReceivedListener = Shizuku.OnBinderReceivedListener {
         isBinderConnected = true
@@ -355,6 +413,7 @@ object ShizukuManager {
         } catch (e: RemoteException) {
             Log.d(TAG, "RemoteException in toggle query code 8: ${e.message}")
         } catch (t: Exception) {
+            Log.d(TAG, "Exception in toggle query code 8: ${t.message}")
         } finally {
             data8.recycle()
             reply8.recycle()
@@ -373,6 +432,7 @@ object ShizukuManager {
         } catch (e: RemoteException) {
             Log.d(TAG, "RemoteException in toggle query code 7: ${e.message}")
         } catch (t: Exception) {
+            Log.d(TAG, "Exception in toggle query code 7: ${t.message}")
         } finally {
             data7.recycle()
             reply7.recycle()
@@ -581,13 +641,13 @@ object ShizukuManager {
                     } catch (e: RemoteException) {
                         Log.d(TAG, "Direct Binder code $txCode remote exception: ${e.message}")
                     } catch (e: Exception) {
-                        // Transaction returned exception, continue to next code
+                        Log.d(TAG, "Direct Binder code $txCode returned exception: ${e.message}")
                     }
                 }
             } catch (e: RemoteException) {
                 Log.d(TAG, "RemoteException invoking code $txCode: ${e.message}")
             } catch (t: Exception) {
-                // Try next code
+                Log.d(TAG, "Exception invoking code $txCode: ${t.message}")
             } finally {
                 data.recycle()
                 reply.recycle()
@@ -616,6 +676,7 @@ object ShizukuManager {
                 Log.d(TAG, "RemoteException in granular toggle for sensor $sensor: ${e.message}")
                 granularSuccess = false
             } catch (t: Exception) {
+                Log.d(TAG, "Exception in granular toggle for sensor $sensor: ${t.message}")
                 granularSuccess = false
             } finally {
                 data.recycle()
@@ -655,6 +716,7 @@ object ShizukuManager {
                     reply.readException()
                     true
                 } catch (e: Exception) {
+                    Log.d(TAG, "Exception in readException for $sensorId: ${e.message}")
                     false
                 }
             } else {
@@ -664,6 +726,7 @@ object ShizukuManager {
             Log.d(TAG, "RemoteException in individual sensor transact $sensorId: ${e.message}")
             false
         } catch (t: Exception) {
+            Log.d(TAG, "Exception in individual sensor transact $sensorId: ${t.message}")
             false
         } finally {
             data.recycle()
@@ -680,232 +743,328 @@ object ShizukuManager {
      * 5. SharedPreferences persistence
      */
     fun setSensorsOffState(context: Context, turnOff: Boolean, skipNotify: Boolean = false): Boolean {
-        val targetValue = if (turnOff) 1 else 0
-        Log.d(TAG, "Setting SensorsOff state to $targetValue")
+        stateOperationLock.lock()
+        try {
+            val targetValue = if (turnOff) 1 else 0
+            Log.d(TAG, "Setting SensorsOff state to $targetValue")
 
-        val hasSecureSettings = hasSecureSettingsPermission(context)
+            val hasSecureSettings = hasSecureSettingsPermission(context)
 
-        // 1. In-memory write to Settings.Global/Secure if WRITE_SECURE_SETTINGS is present
-        if (hasSecureSettings) {
-            try {
-                Settings.Global.putInt(context.contentResolver, "sensors_off", targetValue)
+            // 1. In-memory write to Settings.Global/Secure if WRITE_SECURE_SETTINGS is present
+            if (hasSecureSettings) {
                 try {
-                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy", targetValue)
-                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy_camera", targetValue)
-                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy_microphone", targetValue)
+                    Settings.Global.putInt(context.contentResolver, "sensors_off", targetValue)
+                    try {
+                        Settings.Secure.putInt(context.contentResolver, "sensor_privacy", targetValue)
+                        Settings.Secure.putInt(context.contentResolver, "sensor_privacy_camera", targetValue)
+                        Settings.Secure.putInt(context.contentResolver, "sensor_privacy_microphone", targetValue)
+                    } catch (e: SecurityException) {
+                        Log.d(TAG, "Settings.Secure write security note: ${e.message}")
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Settings.Secure write note: ${e.message}")
+                    }
                 } catch (e: SecurityException) {
-                } catch (e: Exception) {}
-            } catch (e: SecurityException) {
-                Log.w(TAG, "Direct Settings.Global modification security note: ${e.message}")
-            } catch (e: Exception) {
-                Log.w(TAG, "Direct Settings.Global modification note: ${e.message}")
-            }
-        }
-
-        // 2. Direct AIDL / Binder Transact via Shizuku
-        val directBinderSuccess = invokeDirectSensorPrivacyTransact(turnOff)
-
-        // 3. Lean native shell command fallback
-        var shellSuccess = false
-        if (!directBinderSuccess) {
-            val txCode = SensorPrivacyCodes.getPreferredSetGlobalCode()
-            val fastCommand = "service call sensor_privacy $txCode i32 $targetValue"
-
-            if (isShizukuRunning() && isShizukuAuthorized()) {
-                try {
-                    runShizukuCommand(fastCommand)
-                    shellSuccess = true
-                    Log.d(TAG, "Executed lean SensorPrivacy IPC command via Shizuku shell successfully")
+                    Log.w(TAG, "Direct Settings.Global modification security note: ${e.message}")
                 } catch (e: Exception) {
-                    Log.e(TAG, "Shizuku execution failed", e)
+                    Log.w(TAG, "Direct Settings.Global modification note: ${e.message}")
                 }
             }
 
-            if (!shellSuccess && isRootAvailable()) {
-                try {
-                    runRootCommand(fastCommand)
-                    shellSuccess = true
-                    Log.d(TAG, "Executed lean SensorPrivacy IPC command via Root SU successfully")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Root SU execution failed", e)
+            // 2. Direct AIDL / Binder Transact via Shizuku
+            val directBinderSuccess = invokeDirectSensorPrivacyTransact(turnOff)
+
+            // 3. Lean native shell command fallback
+            var shellSuccess = false
+            if (!directBinderSuccess) {
+                val txCode = SensorPrivacyCodes.getPreferredSetGlobalCode()
+                val fastCommand = "service call sensor_privacy $txCode i32 $targetValue"
+
+                if (isShizukuRunning() && isShizukuAuthorized()) {
+                    try {
+                        val res = runShizukuCommand(fastCommand)
+                        shellSuccess = res.success
+                        if (shellSuccess) {
+                            Log.d(TAG, "Executed lean SensorPrivacy IPC command via Shizuku shell successfully")
+                        } else {
+                            Log.w(TAG, "Shizuku shell command returned exit code ${res.exitCode}: ${res.stderr}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Shizuku execution failed", e)
+                    }
+                }
+
+                if (!shellSuccess && isRootAvailable()) {
+                    try {
+                        val res = runRootCommand(fastCommand)
+                        shellSuccess = res.success
+                        if (shellSuccess) {
+                            Log.d(TAG, "Executed lean SensorPrivacy IPC command via Root SU successfully")
+                        } else {
+                            Log.w(TAG, "Root command returned exit code ${res.exitCode}: ${res.stderr}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Root SU execution failed", e)
+                    }
                 }
             }
-        }
 
-        // 4. Asynchronously sync Settings table in background if app lacks WRITE_SECURE_SETTINGS
-        if (!hasSecureSettings && isShizukuRunning() && isShizukuAuthorized()) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    runShizukuCommand("settings put global sensors_off $targetValue ; settings put secure sensor_privacy $targetValue")
-                } catch (e: Exception) {}
+            // 4. Asynchronously sync Settings table in background if app lacks WRITE_SECURE_SETTINGS
+            if (!hasSecureSettings && isShizukuRunning() && isShizukuAuthorized()) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        runShizukuCommand("settings put global sensors_off $targetValue ; settings put secure sensor_privacy $targetValue")
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Background settings sync note: ${e.message}")
+                    }
+                }
             }
+
+            // 5. Authoritative read-back verification: verify actual hardware sensor state
+            var confirmedState = getSensorsOffState(context)
+            if (confirmedState != turnOff) {
+                try {
+                    Thread.sleep(40)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+                confirmedState = getSensorsOffState(context)
+            }
+
+            val verified = (confirmedState == turnOff)
+            if (!verified) {
+                Log.w(TAG, "Read-back verification failed for setSensorsOffState: requested=$turnOff, actual=$confirmedState")
+            }
+
+            // Always sync local SharedPreferences to the confirmed truth
+            val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putBoolean("sensors_off_enabled", confirmedState)
+                .putBoolean("sensor_blocked_camera", confirmedState)
+                .putBoolean("sensor_blocked_mic", confirmedState)
+                .putBoolean("sensor_blocked_motion", confirmedState)
+                .putBoolean("sensor_blocked_gyro", confirmedState)
+                .putBoolean("sensor_blocked_proximity", confirmedState)
+                .putBoolean("sensor_blocked_light", confirmedState)
+                .apply()
+
+            // Only request listening state if not explicitly skipped (e.g. during active Tile onClick)
+            if (!skipNotify) {
+                notifyTileServiceToUpdate(context)
+            }
+
+            return verified
+        } finally {
+            stateOperationLock.unlock()
         }
-
-        val overallSuccess = directBinderSuccess || shellSuccess || hasSecureSettings
-
-        // Always sync local SharedPreferences for consistent app state
-        val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
-        prefs.edit()
-            .putBoolean("sensors_off_enabled", turnOff)
-            .putBoolean("sensor_blocked_camera", turnOff)
-            .putBoolean("sensor_blocked_mic", turnOff)
-            .putBoolean("sensor_blocked_motion", turnOff)
-            .putBoolean("sensor_blocked_gyro", turnOff)
-            .putBoolean("sensor_blocked_proximity", turnOff)
-            .putBoolean("sensor_blocked_light", turnOff)
-            .apply()
-
-        // Only request listening state if not explicitly skipped (e.g. during active Tile onClick)
-        if (!skipNotify) {
-            notifyTileServiceToUpdate(context)
-        }
-
-        return overallSuccess
     }
 
     /**
      * Toggles an individual hardware sensor (Camera, Mic, Motion, etc.)
      */
     fun setIndividualSensorState(context: Context, sensorId: String, turnOff: Boolean, skipNotify: Boolean = false): Boolean {
-        Log.d(TAG, "Setting individual sensor '$sensorId' blocked state to $turnOff")
-        val sensorCode = when (sensorId.lowercase()) {
-            "camera" -> SensorPrivacyCodes.SENSOR_CAMERA
-            "mic", "microphone" -> SensorPrivacyCodes.SENSOR_MICROPHONE
-            else -> 0
-        }
+        stateOperationLock.lock()
+        try {
+            Log.d(TAG, "Setting individual sensor '$sensorId' blocked state to $turnOff")
+            val sensorCode = when (sensorId.lowercase()) {
+                "camera" -> SensorPrivacyCodes.SENSOR_CAMERA
+                "mic", "microphone" -> SensorPrivacyCodes.SENSOR_MICROPHONE
+                else -> 0
+            }
 
-        // Android's SensorPrivacyManager only supports individual toggles for Camera (2) and Microphone (1).
-        // Non-toggleable sensors (motion, gyro, proximity, light) are only affected by global Sensors Off.
-        if (sensorCode == 0) {
-            Log.w(TAG, "Individual sensor '$sensorId' is not supported by AOSP SensorPrivacyManager")
-            return false
-        }
+            // Android's SensorPrivacyManager only supports individual toggles for Camera (2) and Microphone (1).
+            // Non-toggleable sensors (motion, gyro, proximity, light) are only affected by global Sensors Off.
+            if (sensorCode == 0) {
+                Log.w(TAG, "Individual sensor '$sensorId' is not supported by AOSP SensorPrivacyManager")
+                return false
+            }
 
-        val targetVal = if (turnOff) 1 else 0
-        val hasSecureSettings = hasSecureSettingsPermission(context)
+            val targetVal = if (turnOff) 1 else 0
+            val hasSecureSettings = hasSecureSettingsPermission(context)
 
-        // 1. Direct ContentResolver update if WRITE_SECURE_SETTINGS is present
-        if (hasSecureSettings) {
-            try {
-                if (sensorId.equals("camera", ignoreCase = true)) {
-                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy_camera", targetVal)
-                } else if (sensorId.equals("mic", ignoreCase = true) || sensorId.equals("microphone", ignoreCase = true)) {
-                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy_microphone", targetVal)
-                }
-            } catch (e: Exception) {}
-        }
-
-        // 2. Direct AIDL / Parcel Binder Transact via Shizuku
-        val directSuccess = invokeDirectIndividualSensorTransact(sensorId, turnOff)
-
-        val sensorName = if (sensorCode == SensorPrivacyCodes.SENSOR_CAMERA) "camera" else "microphone"
-        val currentUserId = getCurrentUserId()
-
-        var shellSuccess = false
-        if (!directSuccess) {
-            val fastCmd = "service call sensor_privacy ${SensorPrivacyCodes.SET_TOGGLE_PRIVACY} i32 $currentUserId i32 ${SensorPrivacyCodes.SOURCE_QS_TILE} i32 $sensorCode i32 $targetVal"
-            if (isShizukuRunning() && isShizukuAuthorized()) {
+            // 1. Direct ContentResolver update if WRITE_SECURE_SETTINGS is present
+            if (hasSecureSettings) {
                 try {
-                    runShizukuCommand(fastCmd)
-                    shellSuccess = true
+                    if (sensorId.equals("camera", ignoreCase = true)) {
+                        Settings.Secure.putInt(context.contentResolver, "sensor_privacy_camera", targetVal)
+                    } else if (sensorId.equals("mic", ignoreCase = true) || sensorId.equals("microphone", ignoreCase = true)) {
+                        Settings.Secure.putInt(context.contentResolver, "sensor_privacy_microphone", targetVal)
+                    }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Shizuku individual sensor toggle failed", e)
+                    Log.d(TAG, "Secure settings individual sensor write note: ${e.message}")
                 }
             }
 
-            if (!shellSuccess && isRootAvailable()) {
-                try {
-                    runRootCommand(fastCmd)
-                    shellSuccess = true
-                } catch (e: Exception) {
-                    Log.e(TAG, "Root individual sensor toggle failed", e)
+            // 2. Direct AIDL / Parcel Binder Transact via Shizuku
+            val directSuccess = invokeDirectIndividualSensorTransact(sensorId, turnOff)
+
+            val sensorName = if (sensorCode == SensorPrivacyCodes.SENSOR_CAMERA) "camera" else "microphone"
+            val currentUserId = getCurrentUserId()
+
+            var shellSuccess = false
+            if (!directSuccess) {
+                val fastCmd = "service call sensor_privacy ${SensorPrivacyCodes.SET_TOGGLE_PRIVACY} i32 $currentUserId i32 ${SensorPrivacyCodes.SOURCE_QS_TILE} i32 $sensorCode i32 $targetVal"
+                if (isShizukuRunning() && isShizukuAuthorized()) {
+                    try {
+                        val res = runShizukuCommand(fastCmd)
+                        shellSuccess = res.success
+                        if (!shellSuccess) {
+                            Log.w(TAG, "Shizuku individual sensor toggle command failed: ${res.stderr}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Shizuku individual sensor toggle failed", e)
+                    }
+                }
+
+                if (!shellSuccess && isRootAvailable()) {
+                    try {
+                        val res = runRootCommand(fastCmd)
+                        shellSuccess = res.success
+                        if (!shellSuccess) {
+                            Log.w(TAG, "Root individual sensor toggle command failed: ${res.stderr}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Root individual sensor toggle failed", e)
+                    }
                 }
             }
-        }
 
-        // 3. Asynchronously sync Settings in background
-        if (!hasSecureSettings && isShizukuRunning() && isShizukuAuthorized()) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    runShizukuCommand("settings put secure sensor_privacy_$sensorName $targetVal")
-                } catch (e: Exception) {}
+            // 3. Asynchronously sync Settings in background
+            if (!hasSecureSettings && isShizukuRunning() && isShizukuAuthorized()) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        runShizukuCommand("settings put secure sensor_privacy_$sensorName $targetVal")
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Individual sensor background settings sync note: ${e.message}")
+                    }
+                }
             }
+
+            // 4. Authoritative read-back verification
+            var confirmedState = getIndividualSensorState(context, sensorId)
+            if (confirmedState != turnOff) {
+                try {
+                    Thread.sleep(40)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+                confirmedState = getIndividualSensorState(context, sensorId)
+            }
+
+            val verified = (confirmedState == turnOff)
+            if (!verified) {
+                Log.w(TAG, "Read-back verification failed for sensor $sensorId: requested=$turnOff, actual=$confirmedState")
+            }
+
+            val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
+            prefs.edit().putBoolean("sensor_blocked_$sensorId", confirmedState).apply()
+
+            // Explicitly request SystemUI to update the Quick Settings tile immediately
+            if (!skipNotify) {
+                notifyTileServiceToUpdate(context)
+            }
+
+            return verified
+        } finally {
+            stateOperationLock.unlock()
         }
-
-        val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putBoolean("sensor_blocked_$sensorId", turnOff).apply()
-
-        // Explicitly request SystemUI to update the Quick Settings tile immediately
-        if (!skipNotify) {
-            notifyTileServiceToUpdate(context)
-        }
-
-        return directSuccess || shellSuccess
     }
 
     /**
      * Simultaneously toggles camera and microphone in a single operation.
      */
     fun setCamMicSensorState(context: Context, turnOff: Boolean, skipNotify: Boolean = false): Boolean {
-        val targetVal = if (turnOff) 1 else 0
-        val hasSecureSettings = hasSecureSettingsPermission(context)
+        stateOperationLock.lock()
+        try {
+            val targetVal = if (turnOff) 1 else 0
+            val hasSecureSettings = hasSecureSettingsPermission(context)
 
-        // 1. Direct ContentResolver update if WRITE_SECURE_SETTINGS is present
-        if (hasSecureSettings) {
-            try {
-                Settings.Secure.putInt(context.contentResolver, "sensor_privacy_camera", targetVal)
-                Settings.Secure.putInt(context.contentResolver, "sensor_privacy_microphone", targetVal)
-            } catch (e: Exception) {}
-        }
-
-        // 2. Direct Parcel Binder transact for both sensors
-        val micDirect = invokeDirectIndividualSensorTransact("mic", turnOff)
-        val camDirect = invokeDirectIndividualSensorTransact("camera", turnOff)
-        val directSuccess = micDirect && camDirect
-
-        // 3. Single combined native service call fallback
-        var shellSuccess = false
-        if (!directSuccess) {
-            val currentUserId = getCurrentUserId()
-            val fastCmd = "service call sensor_privacy 10 i32 $currentUserId i32 1 i32 1 i32 $targetVal ; service call sensor_privacy 10 i32 $currentUserId i32 1 i32 2 i32 $targetVal"
-            if (isShizukuRunning() && isShizukuAuthorized()) {
+            // 1. Direct ContentResolver update if WRITE_SECURE_SETTINGS is present
+            if (hasSecureSettings) {
                 try {
-                    runShizukuCommand(fastCmd)
-                    shellSuccess = true
+                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy_camera", targetVal)
+                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy_microphone", targetVal)
                 } catch (e: Exception) {
-                    Log.e(TAG, "Shizuku combined cam_mic toggle failed", e)
+                    Log.d(TAG, "Secure settings cam/mic write note: ${e.message}")
                 }
             }
-            if (!shellSuccess && isRootAvailable()) {
-                try {
-                    runRootCommand(fastCmd)
-                    shellSuccess = true
-                } catch (e: Exception) {
-                    Log.e(TAG, "Root combined cam_mic toggle failed", e)
+
+            // 2. Direct Parcel Binder transact for both sensors
+            val micDirect = invokeDirectIndividualSensorTransact("mic", turnOff)
+            val camDirect = invokeDirectIndividualSensorTransact("camera", turnOff)
+            val directSuccess = micDirect && camDirect
+
+            // 3. Single combined native service call fallback
+            var shellSuccess = false
+            if (!directSuccess) {
+                val currentUserId = getCurrentUserId()
+                val fastCmd = "service call sensor_privacy 10 i32 $currentUserId i32 1 i32 1 i32 $targetVal ; service call sensor_privacy 10 i32 $currentUserId i32 1 i32 2 i32 $targetVal"
+                if (isShizukuRunning() && isShizukuAuthorized()) {
+                    try {
+                        val res = runShizukuCommand(fastCmd)
+                        shellSuccess = res.success
+                        if (!shellSuccess) {
+                            Log.w(TAG, "Shizuku cam/mic toggle command failed: ${res.stderr}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Shizuku combined cam_mic toggle failed", e)
+                    }
+                }
+                if (!shellSuccess && isRootAvailable()) {
+                    try {
+                        val res = runRootCommand(fastCmd)
+                        shellSuccess = res.success
+                        if (!shellSuccess) {
+                            Log.w(TAG, "Root cam/mic toggle command failed: ${res.stderr}")
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Root combined cam_mic toggle failed", e)
+                    }
                 }
             }
-        }
 
-        // 4. Background Settings sync (non-blocking)
-        if (!hasSecureSettings && isShizukuRunning() && isShizukuAuthorized()) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    runShizukuCommand("settings put secure sensor_privacy_camera $targetVal ; settings put secure sensor_privacy_microphone $targetVal")
-                } catch (e: Exception) {}
+            // 4. Background Settings sync (non-blocking)
+            if (!hasSecureSettings && isShizukuRunning() && isShizukuAuthorized()) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        runShizukuCommand("settings put secure sensor_privacy_camera $targetVal ; settings put secure sensor_privacy_microphone $targetVal")
+                    } catch (e: Exception) {
+                        Log.d(TAG, "Background settings sync note: ${e.message}")
+                    }
+                }
             }
+
+            // 5. Authoritative read-back verification
+            var confirmedCam = getIndividualSensorState(context, "camera")
+            var confirmedMic = getIndividualSensorState(context, "mic")
+            if (confirmedCam != turnOff || confirmedMic != turnOff) {
+                try {
+                    Thread.sleep(40)
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+                confirmedCam = getIndividualSensorState(context, "camera")
+                confirmedMic = getIndividualSensorState(context, "mic")
+            }
+
+            val verified = (confirmedCam == turnOff && confirmedMic == turnOff)
+            if (!verified) {
+                Log.w(TAG, "Read-back verification failed for cam/mic: requested=$turnOff, cam=$confirmedCam, mic=$confirmedMic")
+            }
+
+            val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putBoolean("sensor_blocked_camera", confirmedCam)
+                .putBoolean("sensor_blocked_mic", confirmedMic)
+                .apply()
+
+            if (!skipNotify) {
+                notifyTileServiceToUpdate(context)
+            }
+
+            return verified
+        } finally {
+            stateOperationLock.unlock()
         }
-
-        val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
-        prefs.edit()
-            .putBoolean("sensor_blocked_camera", turnOff)
-            .putBoolean("sensor_blocked_mic", turnOff)
-            .apply()
-
-        if (!skipNotify) {
-            notifyTileServiceToUpdate(context)
-        }
-
-        return directSuccess || shellSuccess
     }
 
     fun getIndividualSensorState(context: Context, sensorId: String, knownGlobalState: Boolean? = null): Boolean {
@@ -944,7 +1103,9 @@ object ShizukuManager {
                     }
                 }
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.d(TAG, "SensorPrivacyManager reflection note for $sensorId: ${e.message}")
+        }
 
         // Check Secure settings for camera/mic
         try {
@@ -954,7 +1115,9 @@ object ShizukuManager {
             } else if (sensorId.equals("mic", ignoreCase = true) || sensorId.equals("microphone", ignoreCase = true)) {
                 if (Settings.Secure.getInt(cr, "sensor_privacy_microphone", -1) == 1) return true
             }
-        } catch (e: Exception) {}
+        } catch (e: Exception) {
+            Log.d(TAG, "Secure settings query note for $sensorId: ${e.message}")
+        }
 
         val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
         return prefs.getBoolean("sensor_blocked_$sensorId", false)
@@ -1114,7 +1277,7 @@ object ShizukuManager {
         }
 
         return try {
-            val currentTilesOutput = runCommand("settings get secure sysui_qs_tiles").trim()
+            val currentTilesOutput = runCommand("settings get secure sysui_qs_tiles").stdout.trim()
             if (currentTilesOutput.isBlank() || currentTilesOutput == "null") {
                 return Pair(false, "Could not read sysui_qs_tiles.")
             }
@@ -1257,38 +1420,92 @@ object ShizukuManager {
         return prefs.getBoolean("sensors_off_enabled", false)
     }
 
-    fun runShizukuCommand(command: String): String {
+    fun runShizukuCommand(command: String, timeoutMs: Long = 4000L): CommandResult {
         return try {
-            val targetMethod = getShizukuNewProcessMethod() ?: return ""
-            val process = targetMethod.invoke(null, arrayOf("sh", "-c", command), null, null) as java.lang.Process
-            val output = StringBuilder()
-            process.inputStream.bufferedReader().use { reader ->
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    output.append(line).append("\n")
+            val targetMethod = getShizukuNewProcessMethod()
+                ?: return CommandResult.failure("Shizuku newProcess method unavailable")
+            val process = targetMethod.invoke(null, arrayOf("sh", "-c", command), null, null) as? java.lang.Process
+                ?: return CommandResult.failure("Failed to instantiate Shizuku process")
+
+            val stdoutBuilder = StringBuilder()
+            val stderrBuilder = StringBuilder()
+
+            val stdoutThread = Thread {
+                try {
+                    process.inputStream.bufferedReader().use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            stdoutBuilder.append(line).append("\n")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Shizuku stdout read note: ${e.message}")
                 }
             }
-            process.errorStream.bufferedReader().use { reader ->
-                while (reader.readLine() != null) {}
+
+            val stderrThread = Thread {
+                try {
+                    process.errorStream.bufferedReader().use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            stderrBuilder.append(line).append("\n")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Shizuku stderr read note: ${e.message}")
+                }
             }
-            process.waitFor()
-            output.toString()
+
+            stdoutThread.start()
+            stderrThread.start()
+
+            val completed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+            } else {
+                process.waitFor()
+                true
+            }
+
+            if (!completed) {
+                try { process.destroy() } catch (e: Exception) { Log.d(TAG, "Process destroy note: ${e.message}") }
+                try { process.destroyForcibly() } catch (e: Exception) { Log.d(TAG, "Process destroyForcibly note: ${e.message}") }
+                return CommandResult.failure("Shizuku command timed out after ${timeoutMs}ms", exitCode = -2)
+            }
+
+            try { stdoutThread.join(400) } catch (e: InterruptedException) { Thread.currentThread().interrupt() } catch (e: Exception) { Log.d(TAG, "stdout thread join note: ${e.message}") }
+            try { stderrThread.join(400) } catch (e: InterruptedException) { Thread.currentThread().interrupt() } catch (e: Exception) { Log.d(TAG, "stderr thread join note: ${e.message}") }
+
+            val exitCode = try { process.exitValue() } catch (e: Exception) { -1 }
+            val stdout = stdoutBuilder.toString()
+            val stderr = stderrBuilder.toString()
+            val success = (exitCode == 0)
+
+            if (!success) {
+                Log.w(TAG, "Shizuku command exited with code $exitCode. stderr: $stderr")
+            }
+
+            CommandResult(
+                success = success,
+                exitCode = exitCode,
+                stdout = stdout,
+                stderr = stderr
+            )
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException executing Shizuku command: $command", e)
-            ""
+            CommandResult.failure("SecurityException: ${e.message}")
         } catch (e: java.io.IOException) {
             Log.e(TAG, "IOException executing Shizuku command: $command", e)
-            ""
+            CommandResult.failure("IOException: ${e.message}")
         } catch (e: Exception) {
             Log.e(TAG, "Error executing Shizuku command: $command", e)
-            ""
+            CommandResult.failure("Exception: ${e.message}")
         }
     }
 
     /**
      * Executes root commands safely with strict argument isolation and timeout handling.
      */
-    fun runRootCommand(command: String): String {
+    fun runRootCommand(command: String, timeoutMs: Long = 4000L): CommandResult {
         return try {
             val process = Runtime.getRuntime().exec("su")
             DataOutputStream(process.outputStream).use { os ->
@@ -1297,27 +1514,78 @@ object ShizukuManager {
                 os.flush()
             }
 
-            val output = StringBuilder()
-            process.inputStream.bufferedReader().use { reader ->
-                var line: String?
-                while (reader.readLine().also { line = it } != null) {
-                    output.append(line).append("\n")
+            val stdoutBuilder = StringBuilder()
+            val stderrBuilder = StringBuilder()
+
+            val stdoutThread = Thread {
+                try {
+                    process.inputStream.bufferedReader().use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            stdoutBuilder.append(line).append("\n")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Root stdout read note: ${e.message}")
                 }
             }
-            process.errorStream.bufferedReader().use { reader ->
-                while (reader.readLine() != null) {}
+
+            val stderrThread = Thread {
+                try {
+                    process.errorStream.bufferedReader().use { reader ->
+                        var line: String?
+                        while (reader.readLine().also { line = it } != null) {
+                            stderrBuilder.append(line).append("\n")
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.d(TAG, "Root stderr read note: ${e.message}")
+                }
             }
-            process.waitFor()
-            output.toString()
+
+            stdoutThread.start()
+            stderrThread.start()
+
+            val completed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+            } else {
+                process.waitFor()
+                true
+            }
+
+            if (!completed) {
+                try { process.destroy() } catch (e: Exception) { Log.d(TAG, "Process destroy note: ${e.message}") }
+                try { process.destroyForcibly() } catch (e: Exception) { Log.d(TAG, "Process destroyForcibly note: ${e.message}") }
+                return CommandResult.failure("Root command timed out after ${timeoutMs}ms", exitCode = -2)
+            }
+
+            try { stdoutThread.join(400) } catch (e: InterruptedException) { Thread.currentThread().interrupt() } catch (e: Exception) { Log.d(TAG, "stdout thread join note: ${e.message}") }
+            try { stderrThread.join(400) } catch (e: InterruptedException) { Thread.currentThread().interrupt() } catch (e: Exception) { Log.d(TAG, "stderr thread join note: ${e.message}") }
+
+            val exitCode = try { process.exitValue() } catch (e: Exception) { -1 }
+            val stdout = stdoutBuilder.toString()
+            val stderr = stderrBuilder.toString()
+            val success = (exitCode == 0)
+
+            if (!success) {
+                Log.w(TAG, "Root command exited with code $exitCode. stderr: $stderr")
+            }
+
+            CommandResult(
+                success = success,
+                exitCode = exitCode,
+                stdout = stdout,
+                stderr = stderr
+            )
         } catch (e: java.io.IOException) {
             Log.e(TAG, "IOException executing Root command: $command", e)
-            ""
+            CommandResult.failure("IOException: ${e.message}")
         } catch (e: SecurityException) {
             Log.e(TAG, "SecurityException executing Root command: $command", e)
-            ""
+            CommandResult.failure("SecurityException: ${e.message}")
         } catch (e: Exception) {
             Log.e(TAG, "Error executing Root command: $command", e)
-            ""
+            CommandResult.failure("Exception: ${e.message}")
         }
     }
 
