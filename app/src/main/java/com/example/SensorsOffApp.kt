@@ -25,13 +25,6 @@ class SensorsOffApp : Application() {
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                 ShizukuManager.refreshRootState()
             }
-
-            // Honor user preference: only run foreground keep-alive if explicitly enabled by user
-            if (SensorsOffBackgroundService.isKeepAliveEnabled(this)) {
-                SensorsOffBackgroundService.start(this)
-            } else {
-                SensorsOffBackgroundService.stop(this)
-            }
         } catch (e: Throwable) {
             Log.e("SensorsOffApp", "Failed during application initialization", e)
         }

@@ -1383,8 +1383,8 @@ fun SleekLogsTabContent(
             appendLine("Session Uptime    : ${tileDiagnostics.getUptimeString(System.currentTimeMillis())}")
             appendLine("Quick Tile State  : ${tileDiagnostics.lastState}")
             appendLine("Quick Tile Mode   : ${tileDiagnostics.blockMode}")
-            appendLine("Tile Architecture : SensorsOffTileService (Passive SystemUI Mode)")
-            appendLine("Background Daemon : ${if (uiState.isKeepAliveEnabled) "ACTIVE (Immune to Task Killer)" else "STANDBY (On-Demand)"}")
+            appendLine("Tile Architecture : SensorsOffTileService (On-Demand Active QS Tile)")
+            appendLine("Background Mode   : Zero Background Services (100% On-Demand)")
             appendLine("Last Action       : ${tileDiagnostics.lastAction} at ${tileDiagnostics.lastActionTime}")
             tileDiagnostics.lastLatencyMs?.let { appendLine("Last Latency      : ${it}ms") }
             appendLine("==================================================")
@@ -2106,7 +2106,7 @@ fun SleekAboutTabContent(
                     SleekInfoRow(label = "Shizuku Integration", value = if (uiState.isShizukuAuthorized) "Authorized (Active)" else "Inactive")
                     SleekInfoRow(label = "Root Privileges", value = if (uiState.isRootAvailable) "Granted" else "None")
                     SleekInfoRow(label = "Hardware Privacy State", value = if (uiState.isSensorsOff) "Privacy Mode Active" else "Sensors Enabled")
-                    SleekInfoRow(label = "Background Keep-Alive", value = if (uiState.isKeepAliveEnabled) "Running (Foreground Daemon)" else "Disabled (On-Demand)")
+                    SleekInfoRow(label = "Architecture Mode", value = "100% On-Demand (Zero Background Services)")
                 }
             }
         }
@@ -2520,7 +2520,7 @@ fun SleekBackgroundKeepAliveCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "Background Keep-Alive",
+                            text = "OEM Task-Killer Protection",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = colors.textPrimary
@@ -2534,7 +2534,7 @@ fun SleekBackgroundKeepAliveCard(
                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                             ) {
                                 Text(
-                                    text = "ACTIVE",
+                                    text = "ON-DEMAND",
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.ExtraBold,
                                     color = colors.accentCyan
@@ -2543,7 +2543,7 @@ fun SleekBackgroundKeepAliveCard(
                         }
                     }
                     Text(
-                        text = if (isKeepAliveEnabled) "Protected from OEM task killers" else "Run in background to stay active",
+                        text = if (isKeepAliveEnabled) "Tile operates on-demand with zero battery drain" else "100% on-demand Quick Settings Tile",
                         fontSize = 11.sp,
                         color = colors.textSecondary
                     )
@@ -2552,20 +2552,7 @@ fun SleekBackgroundKeepAliveCard(
                 Switch(
                     checked = isKeepAliveEnabled,
                     onCheckedChange = { enabled ->
-                        if (enabled) {
-                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
-                                androidx.core.content.ContextCompat.checkSelfPermission(
-                                    context,
-                                    android.Manifest.permission.POST_NOTIFICATIONS
-                                ) != android.content.pm.PackageManager.PERMISSION_GRANTED
-                            ) {
-                                notificationLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
-                            } else {
-                                onToggleKeepAlive(true)
-                            }
-                        } else {
-                            onToggleKeepAlive(false)
-                        }
+                        onToggleKeepAlive(enabled)
                     },
                     colors = SwitchDefaults.colors(
                         checkedThumbColor = Color.White,
@@ -2579,15 +2566,14 @@ fun SleekBackgroundKeepAliveCard(
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "Official AOSP SensorsOff operates in 100% On-Demand mode with zero background daemons and zero battery consumption. Enabling keep-alive runs a foreground notification so aggressive OEM task-killers never kill the app, but Android 13/14 will list it under 'Active apps'.",
+                text = "SensorsOff operates in 100% On-Demand mode with zero background services and zero battery consumption. Quick Settings toggles execute instantly when tapped. Exclude SensorsOff from Battery Optimization below so OEM systems never freeze the process.",
                 fontSize = 12.sp,
                 color = colors.textSecondary,
                 lineHeight = 17.sp
             )
 
-            if (isKeepAliveEnabled) {
-                Spacer(modifier = Modifier.height(12.dp))
-                OutlinedButton(
+            Spacer(modifier = Modifier.height(12.dp))
+            OutlinedButton(
                     onClick = {
                         if (isIgnoringBattery) {
                             Toast.makeText(context, "Battery optimization is already disabled (SensorsOff is Unrestricted)!", Toast.LENGTH_SHORT).show()
@@ -2632,7 +2618,6 @@ fun SleekBackgroundKeepAliveCard(
                         color = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
                     )
                 }
-            }
         }
     }
 }

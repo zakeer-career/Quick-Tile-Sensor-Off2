@@ -11,6 +11,38 @@ Each commit entry includes:
 
 ---
 
+### [v2.7.6] - 2026-09-20
+
+```git
+refactor(service): purge SensorsOffBackgroundService and adopt 100% on-demand architecture
+
+Problem:
+1. SensorsOffBackgroundService and FOREGROUND_SERVICE/FOREGROUND_SERVICE_SPECIAL_USE permissions caused the app to be flagged in Android 13/14's active apps drawer.
+2. Background service lifecycle calls across Application, Receiver, ViewModel, and ShizukuManager maintained unnecessary coupling.
+3. Quick Settings tile operations do not require an active background daemon, as SystemUI manages tile lifecycle on-demand.
+
+Root Cause:
+1. Legacy foreground keep-alive service pattern carried platform baggage and was unnecessary given active tile mode and Shizuku AIDL IPC.
+
+Changes:
+- SensorsOffBackgroundService.kt: Deleted file completely.
+- AndroidManifest.xml: Removed FOREGROUND_SERVICE and FOREGROUND_SERVICE_SPECIAL_USE permissions; removed SensorsOffBackgroundService declaration.
+- SensorsOffApp.kt: Removed service start/stop invocations during process creation.
+- BootCompletedReceiver.kt: Removed service start/stop invocations on boot; directly pre-warms tile via requestListeningState.
+- ShizukuManager.kt: Removed service update notifications on binder connect, binder dead, and permission granted events.
+- SensorViewModel.kt: Removed service update calls on toggle; decoupled keep-alive setting to direct SharedPreferences.
+- MainActivity.kt: Updated diagnostics and keep-alive UI to reflect pure on-demand architecture.
+- app/build.gradle.kts: Bumped versionCode to 33 and versionName to 2.7.6.
+
+Verification:
+- compile_applet: Succeeded.
+- grep -rn "SensorsOffBackgroundService" app/src/: 0 occurrences.
+- grep -rn "startForeground" app/src/: 0 occurrences.
+- Manifest checks: 0 foreground permissions or service tags.
+```
+
+---
+
 ### [v2.7.5] - 2026-09-11
 
 ```git

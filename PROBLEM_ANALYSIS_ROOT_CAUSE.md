@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.7.6 - Complete Removal of Foreground Keep-Alive Service & Adoption of Pure On-Demand Architecture](#v276---complete-removal-of-foreground-keep-alive-service--adoption-of-pure-on-demand-architecture)
 - [v2.7.5 - Active Tile Declaration, Channel Event-Preservation, Multi-User Isolation & Authoritative Hardware State Sync](#v275---active-tile-declaration-channel-event-preservation-multi-user-isolation--authoritative-hardware-state-sync)
 - [v2.7.4 - Elimination of Background Service Start Restrictions on Android 8.0+](#v274---elimination-of-background-service-start-restrictions-on-android-80)
 - [v2.7.3 - Direct Binder Caching, Rapid-Click Coalescing & Cold-Start Latency Spike Elimination](#v273---direct-binder-caching-rapid-click-coalescing--cold-start-latency-spike-elimination)
@@ -35,6 +36,38 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.7.6] - Complete Removal of Foreground Keep-Alive Service & Adoption of Pure On-Demand Architecture
+
+#### Problem Analysis
+- **Foreground Service Persistence & Active Apps Drawer Presence**:
+  - `SensorsOffBackgroundService` was originally implemented as an ongoing foreground daemon to protect the process from aggressive OEM battery killer task eviction.
+  - However, in Android 13 (API 33) and Android 14 (API 34+), foreground services are surfaced to the user in the "Active apps" task manager dialog with persistent battery impact warnings.
+  - Users explicitly requested the complete elimination of `SensorsOffBackgroundService`, `startForeground()`, and all associated foreground service permissions (`FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`).
+- **Residual Service Invocations**:
+  - The service was called from multiple key touchpoints: `SensorsOffApp.onCreate()`, `BootCompletedReceiver`, `ShizukuManager` listeners, and `SensorViewModel` state changes.
+
+#### Root Cause
+- An ongoing foreground service is fundamentally not required for an Android Quick Settings Tile. SystemUI already manages the lifecycle of `SensorsOffTileService` on-demand via IPC. The active tile declaration `<meta-data android:name="android.service.quicksettings.ACTIVE_TILE" android:value="true" />` allows SystemUI to hold the tile state and invoke the tile on tap without any background process running.
+
+#### Engineered Resolution & Impact
+1. **Physical File Removal**:
+   - Completely deleted `app/src/main/java/com/example/SensorsOffBackgroundService.kt`.
+2. **Permission & Manifest Cleanup**:
+   - Purged `android.permission.FOREGROUND_SERVICE` and `android.permission.FOREGROUND_SERVICE_SPECIAL_USE` from `app/src/main/AndroidManifest.xml`.
+   - Removed the `<service android:name=".SensorsOffBackgroundService" ... />` tag from `AndroidManifest.xml`.
+3. **Application & Receiver Decoupling**:
+   - Stripped start/stop calls from `SensorsOffApp.kt`.
+   - Stripped start/stop calls from `BootCompletedReceiver.kt`, relying exclusively on direct `TileService.requestListeningState()` to pre-warm the active tile after boot.
+4. **IPC & ViewModel Decoupling**:
+   - Removed all `SensorsOffBackgroundService.update()` calls from `ShizukuManager.kt` binder listeners.
+   - Removed update calls from `SensorViewModel.kt`.
+   - Decoupled `isKeepAliveEnabled` preference to direct `SharedPreferences` operations.
+5. **Zero Background Resource Footprint**:
+   - Verified 0 occurrences of `SensorsOffBackgroundService` and 0 occurrences of `startForeground` across the codebase.
+   - SensorsOff now operates with zero persistent background services and zero battery drain while idle.
 
 ---
 

@@ -6,6 +6,45 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.7.6] - 2026-09-20
+
+### Complete Removal of Background Foreground Service & Transition to Pure On-Demand Architecture
+
+#### Problem Analysis
+- **Foreground Service Persistence & Notification Overhead**:
+  - The codebase previously retained `SensorsOffBackgroundService` as a `specialUse` foreground service, requiring `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_SPECIAL_USE` permissions in `AndroidManifest.xml`.
+  - On modern Android releases (Android 13+ / 14+), foreground services are exposed in the system "Active apps" task manager dialog with persistent battery impact warnings, creating unwanted visual noise and conflicting with pure on-demand operation.
+  - The Quick Settings tile architecture (`SensorsOffTileService`) is natively event-driven, operating directly through SystemUI active tile contracts and Shizuku IPC on click or listening events without needing an ongoing background daemon.
+
+#### Root Cause
+- Residual background service architecture created tight coupling across `SensorsOffApp`, `BootCompletedReceiver`, `ShizukuManager`, `SensorViewModel`, and `MainActivity`. Even when idle, maintaining service references, lifecycle calls, and manifest permissions carried platform baggage and prevented true zero-background execution.
+
+#### Code Changes
+1. **File Deletion**:
+   - Deleted `app/src/main/java/com/example/SensorsOffBackgroundService.kt`.
+2. **`app/src/main/AndroidManifest.xml`**:
+   - Removed permissions `android.permission.FOREGROUND_SERVICE` and `android.permission.FOREGROUND_SERVICE_SPECIAL_USE`.
+   - Removed service declaration for `SensorsOffBackgroundService`.
+3. **`app/src/main/java/com/example/SensorsOffApp.kt`**:
+   - Purged all calls to `SensorsOffBackgroundService.start()` and `SensorsOffBackgroundService.stop()`.
+4. **`app/src/main/java/com/example/BootCompletedReceiver.kt`**:
+   - Removed start/stop invocations of `SensorsOffBackgroundService`. Pre-warms Quick Settings tile directly via `TileService.requestListeningState()` and handles root auto-start asynchronously.
+5. **`app/src/main/java/com/example/ShizukuManager.kt`**:
+   - Removed all `SensorsOffBackgroundService.update()` calls from `binderReceivedListener`, `binderDeadListener`, and `permissionResultListener`.
+6. **`app/src/main/java/com/example/SensorViewModel.kt`**:
+   - Removed calls to `SensorsOffBackgroundService.update()` in `toggleSensorsOff` and `toggleIndividualSensor`.
+   - Decoupled `isKeepAliveEnabled` state management from the background service, storing the preference directly in SharedPreferences.
+7. **`app/src/main/java/com/example/MainActivity.kt`**:
+   - Updated UI cards and telemetry to reflect 100% on-demand architecture with zero background services.
+
+#### Telemetry & Verification
+- `grep -rn "SensorsOffBackgroundService" app/src/`: 0 occurrences.
+- `grep -rn "startForeground" app/src/`: 0 occurrences.
+- Manifest contains 0 foreground service permissions or service declarations.
+- Compilation and unit tests passed cleanly.
+
+---
+
 ## [2.7.5] - 2026-09-11
 
 ### Active Tile Declaration, Channel Event-Preservation, Multi-User Isolation & Authoritative Hardware State Sync

@@ -220,7 +220,8 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
 
             val themeMode = ShizukuManager.getAppThemeMode(context)
             val launcherAlias = ShizukuManager.getAppLauncherAlias(context)
-            val isKeepAlive = SensorsOffBackgroundService.isKeepAliveEnabled(context)
+            val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
+            val isKeepAlive = prefs.getBoolean("pref_keep_alive_service_enabled", false)
 
             val updatedSensors = _uiState.value.sensorList.map { sensor ->
                 val sensorBlocked = ShizukuManager.getIndividualSensorState(context, sensor.id, knownGlobalState = isOff)
@@ -295,7 +296,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             } finally {
                 isActionRunning = false
                 refreshState()
-                SensorsOffBackgroundService.update(appContext)
             }
         }
     }
@@ -329,15 +329,15 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 _uiState.update { it.copy(sensorList = revertedSensors, isSensorsOff = revertedAny) }
             }
             refreshState()
-            SensorsOffBackgroundService.update(context)
         }
     }
 
     fun setKeepAliveEnabled(enabled: Boolean) {
         val context = getApplication<Application>().applicationContext
-        SensorsOffBackgroundService.setKeepAliveEnabled(context, enabled)
+        val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putBoolean("pref_keep_alive_service_enabled", enabled).apply()
         _uiState.update { it.copy(isKeepAliveEnabled = enabled) }
-        addLog("Background Keep-Alive Service ${if (enabled) "ENABLED" else "DISABLED"}")
+        addLog("On-Demand Mode Active (Zero background services)")
     }
 
     fun updateTileSettings(

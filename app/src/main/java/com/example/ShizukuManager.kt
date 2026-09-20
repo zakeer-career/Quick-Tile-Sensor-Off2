@@ -46,11 +46,10 @@ object ShizukuManager {
                 }
                 autoGrantSecureSettings(ctx)
                 notifyTileServiceToUpdate(ctx)
-                SensorsOffBackgroundService.update(ctx)
                 TileLogManager.logPrivilegeEvent(
                     ctx,
                     "Shizuku Setup Complete",
-                    "Shizuku setup completed fully. Tile and background service auto-updated to operational state.",
+                    "Shizuku setup completed fully. Tile auto-updated to operational state.",
                     LogLevel.SUCCESS
                 )
             }
@@ -63,7 +62,6 @@ object ShizukuManager {
         Log.w(TAG, "Shizuku binder disconnected process-wide")
         appContextRef?.get()?.let { ctx ->
             notifyTileServiceToUpdate(ctx)
-            SensorsOffBackgroundService.update(ctx)
             TileLogManager.logPrivilegeEvent(ctx, "Shizuku Disconnected", "Shizuku IPC binder died", LogLevel.WARN)
         }
     }
@@ -74,7 +72,6 @@ object ShizukuManager {
             appContextRef?.get()?.let { ctx ->
                 autoGrantSecureSettings(ctx)
                 notifyTileServiceToUpdate(ctx)
-                SensorsOffBackgroundService.update(ctx)
                 TileLogManager.logPrivilegeEvent(
                     ctx,
                     "Shizuku Authorized",
