@@ -11,6 +11,34 @@ Each commit entry includes:
 
 ---
 
+### [v2.7.7] - 2026-09-20
+
+```git
+refactor(ui): purge obsolete keep-alive toggle and preferences for pure on-demand mode
+
+Problem:
+1. Following removal of SensorsOffBackgroundService, the UI retained SleekBackgroundKeepAliveCard with a toggle switch suggesting a persistent background service could be maintained.
+2. Codebase retained dead state and preferences: isKeepAliveEnabled, setKeepAliveEnabled, and pref_keep_alive_service_enabled.
+
+Root Cause:
+1. Residual UI affordances and SharedPreferences logic remained from the deprecated foreground keep-alive service.
+
+Changes:
+- MainActivity.kt: Replaced SleekBackgroundKeepAliveCard with non-interactive SleekOnDemandModeCard explaining that SensorsOff operates on-demand through Quick Settings with zero background services.
+- MainActivity.kt: Updated background service mention in SleekRebootOptimizationCard.
+- SensorViewModel.kt: Removed isKeepAliveEnabled from SensorUiState.
+- SensorViewModel.kt: Removed setKeepAliveEnabled(enabled: Boolean).
+- SensorViewModel.kt: Purged pref_keep_alive_service_enabled SharedPreferences reading and writing.
+- app/build.gradle.kts: Bumped versionCode to 34 and versionName to 2.7.7.
+
+Verification:
+- compile_applet: Succeeded.
+- grep -rnE "isKeepAliveEnabled|setKeepAliveEnabled|SleekBackgroundKeepAliveCard|keep_alive|KeepAlive" app/src/: 0 occurrences.
+- Manifest checks: SensorsOffTileService and BootCompletedReceiver intact; 0 foreground/background service definitions.
+```
+
+---
+
 ### [v2.7.6] - 2026-09-20
 
 ```git

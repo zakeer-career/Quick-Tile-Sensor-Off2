@@ -57,7 +57,6 @@ data class SensorUiState(
     val logs: List<String> = emptyList(),
     val tileSettings: TileSettingsState = TileSettingsState(),
     val showExperimentalToggles: Boolean = false,
-    val isKeepAliveEnabled: Boolean = false,
     val sensorList: List<SensorItem> = listOf(
         SensorItem("camera", "Camera", "Hardware Sensor", false, "ic_camera"),
         SensorItem("mic", "Microphone", "Audio Input", false, "ic_mic"),
@@ -220,8 +219,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
 
             val themeMode = ShizukuManager.getAppThemeMode(context)
             val launcherAlias = ShizukuManager.getAppLauncherAlias(context)
-            val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
-            val isKeepAlive = prefs.getBoolean("pref_keep_alive_service_enabled", false)
 
             val updatedSensors = _uiState.value.sensorList.map { sensor ->
                 val sensorBlocked = ShizukuManager.getIndividualSensorState(context, sensor.id, knownGlobalState = isOff)
@@ -250,7 +247,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                     appThemeMode = themeMode,
                     appLauncherAlias = launcherAlias,
                     showExperimentalToggles = showExp,
-                    isKeepAliveEnabled = isKeepAlive,
                     tileSettings = TileSettingsState(
                         iconStyle = tileIconStyle,
                         customLabel = tileLabelText,
@@ -330,14 +326,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             }
             refreshState()
         }
-    }
-
-    fun setKeepAliveEnabled(enabled: Boolean) {
-        val context = getApplication<Application>().applicationContext
-        val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putBoolean("pref_keep_alive_service_enabled", enabled).apply()
-        _uiState.update { it.copy(isKeepAliveEnabled = enabled) }
-        addLog("On-Demand Mode Active (Zero background services)")
     }
 
     fun updateTileSettings(

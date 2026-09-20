@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.7.7 - Purge of Obsolete Keep-Alive UI and Preferences for Pure On-Demand Operation](#v277---purge-of-obsolete-keep-alive-ui-and-preferences-for-pure-on-demand-operation)
 - [v2.7.6 - Complete Removal of Foreground Keep-Alive Service & Adoption of Pure On-Demand Architecture](#v276---complete-removal-of-foreground-keep-alive-service--adoption-of-pure-on-demand-architecture)
 - [v2.7.5 - Active Tile Declaration, Channel Event-Preservation, Multi-User Isolation & Authoritative Hardware State Sync](#v275---active-tile-declaration-channel-event-preservation-multi-user-isolation--authoritative-hardware-state-sync)
 - [v2.7.4 - Elimination of Background Service Start Restrictions on Android 8.0+](#v274---elimination-of-background-service-start-restrictions-on-android-80)
@@ -36,6 +37,30 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.7.7] - Purge of Obsolete Keep-Alive UI and Preferences for Pure On-Demand Operation
+
+#### Problem Analysis
+- **Obsolete Keep-Alive UI and Preferences**:
+  - Following the total removal of `SensorsOffBackgroundService`, the UI retained `SleekBackgroundKeepAliveCard` with a toggle switch.
+  - The toggle gave users the impression that a background daemon could be toggled on or off, and mutated an orphaned preference key `pref_keep_alive_service_enabled`.
+  - It was necessary to purge the toggle and state, replacing the card with an informational on-demand summary.
+
+#### Root Cause
+- The removal of the background service left behind front-end UI affordances (`SleekBackgroundKeepAliveCard`), state fields (`isKeepAliveEnabled`), ViewModel methods (`setKeepAliveEnabled`), and preference entries.
+
+#### Engineered Resolution & Impact
+1. **Replacement with Informational On-Demand Card**:
+   - Replaced `SleekBackgroundKeepAliveCard` with `SleekOnDemandModeCard` displaying: "On-Demand Mode: SensorsOff runs through the Quick Settings Tile when needed. No permanent background service is running."
+   - The card has no toggle switches. It retains the standard direct prompt button for battery optimization exemption to prevent OEM process freeze.
+2. **State & Preference Cleanup**:
+   - Removed `isKeepAliveEnabled` from `SensorUiState`.
+   - Removed `setKeepAliveEnabled(enabled: Boolean)` from `SensorViewModel`.
+   - Purged all reads and writes of `pref_keep_alive_service_enabled`.
+3. **Verification**:
+   - Confirmed 0 occurrences of keep-alive UI or preferences across the entire application codebase.
 
 ---
 

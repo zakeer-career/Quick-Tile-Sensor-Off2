@@ -236,14 +236,9 @@ fun SleekHomeTabContent(
             )
         }
 
-        // Background Keep-Alive Daemon Card
+        // On-Demand Architecture Information Card
         item {
-            SleekBackgroundKeepAliveCard(
-                isKeepAliveEnabled = uiState.isKeepAliveEnabled,
-                onToggleKeepAlive = { enabled ->
-                    viewModel.setKeepAliveEnabled(enabled)
-                }
-            )
+            SleekOnDemandModeCard()
         }
 
         if (uiState.showExperimentalToggles) {
@@ -2112,12 +2107,7 @@ fun SleekAboutTabContent(
         }
 
         item {
-            SleekBackgroundKeepAliveCard(
-                isKeepAliveEnabled = uiState.isKeepAliveEnabled,
-                onToggleKeepAlive = { enabled ->
-                    viewModel.setKeepAliveEnabled(enabled)
-                }
-            )
+            SleekOnDemandModeCard()
         }
 
         item {
@@ -2453,10 +2443,7 @@ fun SleekNavItem(
 }
 
 @Composable
-fun SleekBackgroundKeepAliveCard(
-    isKeepAliveEnabled: Boolean,
-    onToggleKeepAlive: (Boolean) -> Unit
-) {
+fun SleekOnDemandModeCard() {
     val colors = LocalAppColors.current
     val context = LocalContext.current
 
@@ -2478,22 +2465,13 @@ fun SleekBackgroundKeepAliveCard(
         }
     }
 
-    val notificationLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        onToggleKeepAlive(true)
-        if (!isGranted) {
-            Toast.makeText(context, "Notification permission recommended to maintain keep-alive status", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = colors.cardBg),
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (isKeepAliveEnabled) colors.accentCyan.copy(alpha = 0.5f) else (if (colors.isDark) colors.glowColor else colors.border)
+            if (colors.isDark) colors.glowColor else colors.border
         ),
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
@@ -2506,13 +2484,13 @@ fun SleekBackgroundKeepAliveCard(
                     modifier = Modifier
                         .size(38.dp)
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (isKeepAliveEnabled) colors.accentCyan.copy(alpha = 0.15f) else colors.softBg),
+                        .background(colors.accentCyan.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = Icons.Default.Security,
-                        contentDescription = "Background Keep-Alive",
-                        tint = if (isKeepAliveEnabled) colors.accentCyan else colors.textMuted,
+                        imageVector = Icons.Default.Bolt,
+                        contentDescription = "On-Demand Mode",
+                        tint = colors.accentCyan,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -2520,53 +2498,38 @@ fun SleekBackgroundKeepAliveCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "OEM Task-Killer Protection",
+                            text = "On-Demand Mode",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = colors.textPrimary
                         )
-                        if (isKeepAliveEnabled) {
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(colors.accentCyan.copy(alpha = 0.2f))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = "ON-DEMAND",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = colors.accentCyan
-                                )
-                            }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(colors.accentCyan.copy(alpha = 0.2f))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = "ACTIVE",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = colors.accentCyan
+                            )
                         }
                     }
                     Text(
-                        text = if (isKeepAliveEnabled) "Tile operates on-demand with zero battery drain" else "100% on-demand Quick Settings Tile",
+                        text = "SensorsOff runs through the Quick Settings Tile when needed",
                         fontSize = 11.sp,
                         color = colors.textSecondary
                     )
                 }
-
-                Switch(
-                    checked = isKeepAliveEnabled,
-                    onCheckedChange = { enabled ->
-                        onToggleKeepAlive(enabled)
-                    },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = colors.accentCyan,
-                        uncheckedThumbColor = Color.White,
-                        uncheckedTrackColor = colors.softBg
-                    )
-                )
             }
 
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "SensorsOff operates in 100% On-Demand mode with zero background services and zero battery consumption. Quick Settings toggles execute instantly when tapped. Exclude SensorsOff from Battery Optimization below so OEM systems never freeze the process.",
+                text = "SensorsOff runs through the Quick Settings Tile when needed. No permanent background service is running.",
                 fontSize = 12.sp,
                 color = colors.textSecondary,
                 lineHeight = 17.sp
@@ -2574,50 +2537,50 @@ fun SleekBackgroundKeepAliveCard(
 
             Spacer(modifier = Modifier.height(12.dp))
             OutlinedButton(
-                    onClick = {
-                        if (isIgnoringBattery) {
-                            Toast.makeText(context, "Battery optimization is already disabled (SensorsOff is Unrestricted)!", Toast.LENGTH_SHORT).show()
-                        } else {
+                onClick = {
+                    if (isIgnoringBattery) {
+                        Toast.makeText(context, "Battery optimization is already disabled (SensorsOff is Unrestricted)!", Toast.LENGTH_SHORT).show()
+                    } else {
+                        try {
+                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = android.net.Uri.parse("package:${context.packageName}")
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                            context.startActivity(intent)
+                        } catch (e: Exception) {
                             try {
-                                val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                    data = android.net.Uri.parse("package:${context.packageName}")
+                                val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
                                     addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 }
                                 context.startActivity(intent)
-                            } catch (e: Exception) {
-                                try {
-                                    val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(intent)
-                                } catch (_: Exception) {}
-                            }
+                            } catch (_: Exception) {}
                         }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
-                    ),
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp,
-                        if (isIgnoringBattery) colors.accentGreen.copy(alpha = 0.5f) else colors.accentCyan.copy(alpha = 0.5f)
-                    )
-                ) {
-                    Icon(
-                        imageVector = if (isIgnoringBattery) Icons.Default.CheckCircle else Icons.Default.BatteryChargingFull,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = if (isIgnoringBattery) "Battery Optimization Excluded (Unrestricted)" else "Exclude from Battery Optimization (Direct Prompt)",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
-                    )
-                }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
+                ),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (isIgnoringBattery) colors.accentGreen.copy(alpha = 0.5f) else colors.accentCyan.copy(alpha = 0.5f)
+                )
+            ) {
+                Icon(
+                    imageVector = if (isIgnoringBattery) Icons.Default.CheckCircle else Icons.Default.BatteryChargingFull,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = if (isIgnoringBattery) "Battery Optimization Excluded (Unrestricted)" else "Exclude from Battery Optimization (Direct Prompt)",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
+                )
+            }
         }
     }
 }
@@ -2687,7 +2650,7 @@ fun SleekRebootOptimizationCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             Text(
-                text = "On non-rooted Android 14, system security architecture terminates non-system background processes (including Shizuku) during reboot. While SensorsOff restarts its background service on boot, Shizuku requires manual re-start via Wireless Debugging unless WRITE_SECURE_SETTINGS or root is configured.",
+                text = "On non-rooted Android devices, system security architecture terminates non-system background processes (including Shizuku) during reboot. While SensorsOff pre-warms its Quick Settings Tile on boot, Shizuku requires manual re-start via Wireless Debugging unless WRITE_SECURE_SETTINGS or root is configured.",
                 fontSize = 12.sp,
                 color = colors.textSecondary,
                 lineHeight = 17.sp

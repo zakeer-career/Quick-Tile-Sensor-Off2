@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.7.7] - 2026-09-20
+
+### Complete Purge of Obsolete Keep-Alive UI and Preference Infrastructure
+
+#### Problem Analysis
+- **Residual Keep-Alive UI and Preferences**:
+  - Following the complete removal of `SensorsOffBackgroundService`, the UI retained `SleekBackgroundKeepAliveCard` containing an active switch/toggle.
+  - The toggle suggested the app could maintain a persistent background service and persisted an obsolete preference key `pref_keep_alive_service_enabled`.
+  - Keeping this toggle misled users regarding the 100% on-demand architecture.
+
+#### Root Cause
+- Legacy UI components (`SleekBackgroundKeepAliveCard`), state fields (`isKeepAliveEnabled`), view model handlers (`setKeepAliveEnabled`), and preference keys (`pref_keep_alive_service_enabled`) lingered without any backing service.
+
+#### Code Changes
+1. **`app/src/main/java/com/example/MainActivity.kt`**:
+   - Removed `SleekBackgroundKeepAliveCard` and replaced it with a purely informational, non-toggleable `SleekOnDemandModeCard` displaying: "On-Demand Mode: SensorsOff runs through the Quick Settings Tile when needed. No permanent background service is running."
+   - Cleaned up obsolete background service phrasing in `SleekRebootOptimizationCard`.
+2. **`app/src/main/java/com/example/SensorViewModel.kt`**:
+   - Removed `isKeepAliveEnabled` property from `SensorUiState`.
+   - Removed `setKeepAliveEnabled(enabled: Boolean)` method.
+   - Purged `pref_keep_alive_service_enabled` SharedPreferences reading and writing.
+3. **`app/build.gradle.kts`**:
+   - Bumped `versionCode` to 34 and `versionName` to "2.7.7".
+
+#### Telemetry & Verification
+- `grep -rnE "isKeepAliveEnabled|setKeepAliveEnabled|SleekBackgroundKeepAliveCard|keep_alive|KeepAlive" app/src/`: 0 occurrences.
+- Manifest contains `SensorsOffTileService` and `BootCompletedReceiver`; contains 0 services, foreground services, or daemon declarations.
+
+---
+
 ## [2.7.6] - 2026-09-20
 
 ### Complete Removal of Background Foreground Service & Transition to Pure On-Demand Architecture
