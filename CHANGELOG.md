@@ -11,50 +11,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 ### Production Release: com.SensorsOff Application ID, Creator Attribution, Tri-State Verification & IPC Hardening
 
 #### Problem Analysis
-- **Authoritative Sensor State Verification**:
+- **Authoritative Sensor State Verification & Explicit Binder Results**:
   - The previous implementation relied on binary Booleans, which could treat failed queries, null values, or local SharedPreferences as valid confirmation of hardware sensor state.
-  - Verification could report SUCCESS if a query failed and fell back to a default boolean value.
+  - Low-level Binder transact operations previously returned a generic boolean, conflating remote IPC acceptance with actual sensor state confirmation.
+- **Continuous Polling Loop**:
+  - `SensorViewModel.kt` previously executed a periodic 2.5-second polling loop while active, causing unnecessary CPU wakeups and violating event-driven design principles.
 - **Package Identity & Attribution**:
   - Canonical package identity established as `com.SensorsOff`.
   - Official creator attribution established as "zakeer-career" within resource metadata and UI display.
 - **IPC Robustness & On-Demand Lifecycle**:
   - `BootCompletedReceiver` previously contained an automatic root start attempt for Shizuku; this was removed to keep the application strictly 100% on-demand.
-  - Process stdout/stderr/stdin streams in `runShizukuCommand` and `runRootCommand` are now cleanly closed in `finally` blocks.
+  - Process stdout/stderr/stdin streams in `runShizukuCommand` and `runRootCommand` are cleanly closed in `finally` blocks.
+  - Scrubbed unsupported performance claims (e.g. "0ms", "instant", "zero latency") in favor of factual descriptions.
 
 #### Root Cause
 - Binary boolean returns lacked expressiveness to represent unknown, failed, or unverified hardware sensor states.
-- Authoritative state verification required direct querying of the Android sensor privacy service via Binder / SPM reflection, strictly distinguishing `ENABLED`, `DISABLED`, and `UNKNOWN`.
+- Low-level IPC acceptance is distinct from state confirmation; authoritative state verification requires direct querying of the Android sensor privacy service via Binder / SPM reflection, strictly distinguishing `ENABLED`, `DISABLED`, and `UNKNOWN`.
+- Periodic polling in ViewModel was redundant with Android `ContentObserver`, lifecycle events (`onResume`), and Shizuku listener callbacks.
 
 #### Code Changes
 1. **`app/src/main/java/com/example/SensorPrivacyState.kt`**:
    - Created `SensorPrivacyState` enum (`ENABLED`, `DISABLED`, `UNKNOWN`) with `matchesRequested(turnOff: Boolean)` and `isAuthoritative` helpers.
-   - Created `SensorToggleResult` sealed class (`Success`, `VerificationFailed`, `ExecutionFailed`, `Unavailable`).
+   - Created `BinderTransactionResult` enum (`TRANSACTION_ACCEPTED`, `BINDER_ERROR`, `UNSUPPORTED`, `TRANSACTION_ERROR`, `EXCEPTION`) for explicit low-level IPC status.
+   - Created `SensorToggleResult` sealed class (`Success`, `Failure`).
 2. **`app/src/main/java/com/example/ShizukuManager.kt`**:
+   - Converted `invokeDirectSensorPrivacyTransact()` and `invokeDirectIndividualSensorTransact()` to return `BinderTransactionResult`.
    - Converted `queryDirectSensorPrivacy()`, `queryDirectToggleSensorPrivacy()`, `getSensorsOffState()`, and `getIndividualSensorState()` to return `SensorPrivacyState`.
    - Guaranteed that `UNKNOWN` is never treated as `ENABLED` or `DISABLED`.
    - Updated `setSensorsOffState`, `setIndividualSensorState`, and `setCamMicSensorState` to strictly verify against actual hardware reads before persisting to `SharedPreferences` or returning success.
    - Added process stream closures in `finally` blocks for `runShizukuCommand` and `runRootCommand`.
-3. **`app/src/main/java/com/example/SensorsOffTileService.kt`**:
-   - Refactored `onStartListening` and toggle worker loop to consume `SensorPrivacyState` and prevent premature or unverified state flips.
-4. **`app/src/main/java/com/example/SensorViewModel.kt`**:
+   - Documented internal transaction mappings and OEM variance.
+3. **`app/src/main/java/com/example/SensorViewModel.kt`**:
+   - Removed periodic 2.5-second polling loop, transitioning to 100% event-driven and lifecycle-driven updates (`ContentObserver`, `onResume`, Shizuku listeners).
    - Refactored `refreshState` and `contentObserver` to consume `SensorPrivacyState`.
+4. **`app/src/main/java/com/example/SensorsOffTileService.kt`**:
+   - Refactored `onStartListening` and toggle worker loop to consume `SensorPrivacyState` and prevent premature or unverified state flips.
 5. **`app/src/main/java/com/example/BootCompletedReceiver.kt`**:
    - Removed automatic root start logic to adhere strictly to on-demand architecture.
 6. **`app/src/test/java/com/example/ExampleRobolectricTest.kt`**:
-   - Added unit tests for `SensorPrivacyState` state contracts, rejection of unverified/unknown states, and non-daemon boot receiver behavior.
-7. **`.github/workflows/build-apk.yml` & `README.md`**:
+   - Added unit tests for `SensorPrivacyState` state contracts, `BinderTransactionResult` states, rejection of unverified/unknown states, and non-daemon boot receiver behavior.
+7. **`README.md` & Documentation**:
+   - Refactored performance wording to use factual statements ("Fast Quick Settings Integration", "Rapid hardware state switching").
+8. **`.github/workflows/build-apk.yml`**:
    - Enforced automated unit test execution (`testDebugUnitTest`) before debug APK assembly on all pushes and pull requests.
    - Configured GitHub Release automation to attach versioned release APK binaries (`SensorsOff-v${VERSION}-debug.apk`) directly matching repository source commits.
-   - Updated README documentation, badges, and ADB setup commands to reflect `com.SensorsOff` and v2.7.9.
-8. **`app/src/test/` (Robolectric Target SDK Configuration)**:
-   - Configured Robolectric test target SDK to API 34 (`sdk = [34]`) in `ExampleRobolectricTest`, `GreetingScreenshotTest`, and `app/src/test/resources/robolectric.properties`.
-   - Resolved `DefaultSdkProvider` unsupported SDK 36 exception in headless CI test runners.
+   - Added automated workflow artifact upload for full source code bundles (`SensorsOff-Source-Code`) alongside APK artifacts.
 
 #### Telemetry & Verification
 - `compile_applet`: Build succeeded.
-- `gradle :app:testDebugUnitTest`: 100% tests passing (31/31 unit tests green in 58s).
+- `gradle :app:testDebugUnitTest`: 100% tests passing (32/32 unit tests green in 24s).
 - Package ID: `com.SensorsOff`.
 - Creator: `zakeer-career`.
+- Static Audit: 0 foreground services, 0 background daemons, 0 keep-alive services, 0 periodic polling timers.
 
 ---
 

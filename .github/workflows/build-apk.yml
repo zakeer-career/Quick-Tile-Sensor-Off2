@@ -85,6 +85,22 @@ jobs:
           path: release-apk/*.apk
           compression-level: 0
 
+      - name: Upload Source Code Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SensorsOff-Source-Code
+          path: |
+            app/src
+            app/build.gradle.kts
+            app/proguard-rules.pro
+            gradle
+            gradlew*
+            build.gradle.kts
+            settings.gradle.kts
+            CHANGELOG.md
+            README.md
+          compression-level: 9
+
       - name: Generate Release Notes from CHANGELOG
         run: |
           if [ -f CHANGELOG.md ]; then

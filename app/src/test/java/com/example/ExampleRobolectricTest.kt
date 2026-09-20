@@ -209,6 +209,15 @@ class ExampleRobolectricTest {
   }
 
   @Test
+  fun `test binder transaction result enum states`() {
+    assertTrue(BinderTransactionResult.TRANSACTION_ACCEPTED.isAccepted)
+    org.junit.Assert.assertFalse(BinderTransactionResult.BINDER_ERROR.isAccepted)
+    org.junit.Assert.assertFalse(BinderTransactionResult.UNSUPPORTED.isAccepted)
+    org.junit.Assert.assertFalse(BinderTransactionResult.TRANSACTION_ERROR.isAccepted)
+    org.junit.Assert.assertFalse(BinderTransactionResult.EXCEPTION.isAccepted)
+  }
+
+  @Test
   fun `test unprivileged setSensorsOffState returns false when privileges missing`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val result = ShizukuManager.setSensorsOffState(context, turnOff = true, skipNotify = true)

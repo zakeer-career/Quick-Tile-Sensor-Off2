@@ -164,18 +164,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 Log.w("SensorViewModel", "ContentObserver registration note: ${e.message}")
             }
-
-            // Periodic sync loop while ViewModel is active
-            viewModelScope.launch(Dispatchers.IO) {
-                while (isActive) {
-                    delay(2500)
-                    val liveState = ShizukuManager.getSensorsOffState(context)
-                    val liveOff = (liveState == SensorPrivacyState.ENABLED)
-                    if (liveOff != _uiState.value.isSensorsOff) {
-                        refreshState()
-                    }
-                }
-            }
         }
     }
 

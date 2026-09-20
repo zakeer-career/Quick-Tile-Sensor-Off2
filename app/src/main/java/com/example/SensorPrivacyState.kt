@@ -51,6 +51,41 @@ enum class SensorPrivacyState {
 }
 
 /**
+ * Explicit outcome for low-level ISensorPrivacyManager Binder transactions.
+ * Important: TRANSACTION_ACCEPTED only indicates the IPC call was accepted by the remote service,
+ * NOT that the sensor state has been confirmed. Read-back verification is always required.
+ */
+enum class BinderTransactionResult {
+    /**
+     * Binder transaction succeeded and returned without exception.
+     */
+    TRANSACTION_ACCEPTED,
+
+    /**
+     * Sensor privacy binder is null, dead, or unavailable.
+     */
+    BINDER_ERROR,
+
+    /**
+     * The transaction code or method is not supported by the current Android version or OEM.
+     */
+    UNSUPPORTED,
+
+    /**
+     * The transaction returned false from IBinder.transact() (rejected by kernel/remote).
+     */
+    TRANSACTION_ERROR,
+
+    /**
+     * An exception (RemoteException, SecurityException, etc.) occurred during transaction.
+     */
+    EXCEPTION;
+
+    val isAccepted: Boolean
+        get() = this == TRANSACTION_ACCEPTED
+}
+
+/**
  * Explicit result for sensor toggle operations, requiring authoritative read-back verification.
  */
 sealed class SensorToggleResult {

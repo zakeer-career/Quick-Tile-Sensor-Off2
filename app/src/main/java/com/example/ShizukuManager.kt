@@ -44,8 +44,8 @@ data class CommandResult(
 /**
  * Centralized Binder Transaction Codes for android.hardware.ISensorPrivacyManager.
  *
- * Compatibility Assumptions:
- * - ISensorPrivacyManager is an internal Android system service AIDL interface ("android.hardware.ISensorPrivacyManager").
+ * Compatibility & Architecture Note:
+ * - These are internal Android sensor privacy service transaction mappings and may vary by Android version/OEM.
  * - Transaction codes correspond directly to method declarations in ISensorPrivacyManager.aidl across AOSP versions:
  *   * Android 12+ (API 31+): setSensorPrivacy is code 9, setToggleSensorPrivacy is code 10,
  *     isToggleSensorPrivacyEnabled is code 8, isCombinedToggleSensorPrivacyEnabled is code 7,
@@ -55,13 +55,12 @@ data class CommandResult(
  *
  * OEM Divergence & Fallback Behavior:
  * - Certain OEM ROMs (e.g., Xiaomi HyperOS/MIUI, Samsung OneUI, Transsion HiOS) may re-order internal AIDL methods.
- * - Because Binder transaction numbers may vary on heavily modified vendor trees:
+ * - Because internal Binder transaction numbers may vary on modified vendor trees:
  *   1. We attempt the version-preferred transaction code first.
- *   2. If a RemoteException or failure occurs, we iterate across known alternate version codes.
- *   3. If direct Binder IPC fails, we fall back to shell commands ('service call sensor_privacy <code...>').
- *   4. If shell IPC fails, we fall back to Settings.Global/Secure table modification.
- *   5. Critical: Operations are ONLY considered successful if an authoritative read-back of the sensor state
- *      matches the requested target state.
+ *   2. If a RemoteException or failure occurs, we iterate across documented alternate version codes only.
+ *   3. If direct Binder IPC fails, we fall back to privileged shell commands ('service call sensor_privacy <code...>').
+ *   4. Critical: Operations are ONLY considered successful if an authoritative read-back of the Android sensor privacy service
+ *      matches the requested target state. A successful Binder transaction does NOT prove hardware state change.
  */
 object SensorPrivacyTransactions {
     const val DESCRIPTOR = "android.hardware.ISensorPrivacyManager"
@@ -619,15 +618,20 @@ object ShizukuManager {
     }
 
     /**
-     * Executes direct low-level Binder transact calls across Shizuku IPC.
-     * Bypasses the shell, sub-processes, and ART runtime entirely.
+     * Executes direct low-level Binder transact calls across Shizuku IPC using known AIDL codes.
+     * Important: A successful transaction (TRANSACTION_ACCEPTED) only means the Binder IPC call
+     * was accepted by the remote sensor_privacy service. It does NOT guarantee the hardware state changed.
+     * Authoritative read-back verification against the real sensor state is always performed afterward.
+     * Note: These are internal Android sensor privacy service transaction mappings and may vary by Android version/OEM.
      */
-    fun invokeDirectSensorPrivacyTransact(turnOff: Boolean): Boolean {
-        val wrapper = getSensorPrivacyBinder() ?: return false
+    fun invokeDirectSensorPrivacyTransact(turnOff: Boolean): BinderTransactionResult {
+        val wrapper = getSensorPrivacyBinder() ?: return BinderTransactionResult.BINDER_ERROR
         val targetVal = if (turnOff) 1 else 0
 
-        // 1. Direct low-level Parcel Binder transact for global sensor privacy:
+        // 1. Direct low-level Parcel Binder transact for global sensor privacy across known codes:
         val txCodes = SensorPrivacyCodes.getAllSetGlobalCodes()
+        var lastErrorResult = BinderTransactionResult.UNSUPPORTED
+
         for (txCode in txCodes) {
             val data = Parcel.obtain()
             val reply = Parcel.obtain()
@@ -638,30 +642,37 @@ object ShizukuManager {
                 if (res) {
                     try {
                         reply.readException()
-                        Log.d(TAG, "Direct Binder transact code $txCode succeeded fast")
-                        return true
+                        Log.d(TAG, "Direct Binder transact code $txCode accepted by sensor_privacy service")
+                        return BinderTransactionResult.TRANSACTION_ACCEPTED
                     } catch (e: SecurityException) {
-                        Log.d(TAG, "Direct Binder code $txCode security exception: ${e.message}")
+                        Log.w(TAG, "Direct Binder code $txCode security exception: ${e.message}")
+                        lastErrorResult = BinderTransactionResult.EXCEPTION
                     } catch (e: RemoteException) {
-                        Log.d(TAG, "Direct Binder code $txCode remote exception: ${e.message}")
+                        Log.w(TAG, "Direct Binder code $txCode remote exception: ${e.message}")
+                        lastErrorResult = BinderTransactionResult.EXCEPTION
                     } catch (e: Exception) {
-                        Log.d(TAG, "Direct Binder code $txCode returned exception: ${e.message}")
+                        Log.w(TAG, "Direct Binder code $txCode exception: ${e.message}")
+                        lastErrorResult = BinderTransactionResult.EXCEPTION
                     }
+                } else {
+                    lastErrorResult = BinderTransactionResult.TRANSACTION_ERROR
                 }
             } catch (e: RemoteException) {
-                Log.d(TAG, "RemoteException invoking code $txCode: ${e.message}")
+                Log.w(TAG, "RemoteException invoking code $txCode: ${e.message}")
+                lastErrorResult = BinderTransactionResult.EXCEPTION
             } catch (t: Exception) {
-                Log.d(TAG, "Exception invoking code $txCode: ${t.message}")
+                Log.w(TAG, "Exception invoking code $txCode: ${t.message}")
+                lastErrorResult = BinderTransactionResult.EXCEPTION
             } finally {
                 data.recycle()
                 reply.recycle()
             }
         }
 
-        // 2. Fallback: Granular Mic (1) and Camera (2) toggle via transaction code 10:
+        // 2. Known fallback: Granular Mic (1) and Camera (2) toggle via transaction code 10:
         // void setToggleSensorPrivacy(int userId, int source, int sensor, boolean enable)
-        var granularSuccess = true
         val currentUserId = getCurrentUserId()
+        var granularAcceptedCount = 0
         for (sensor in intArrayOf(SensorPrivacyCodes.SENSOR_MICROPHONE, SensorPrivacyCodes.SENSOR_CAMERA)) {
             val data = Parcel.obtain()
             val reply = Parcel.obtain()
@@ -673,38 +684,40 @@ object ShizukuManager {
                 data.writeInt(targetVal)
                 if (wrapper.transact(SensorPrivacyCodes.SET_TOGGLE_PRIVACY, data, reply, 0)) {
                     reply.readException()
-                } else {
-                    granularSuccess = false
+                    granularAcceptedCount++
                 }
             } catch (e: RemoteException) {
-                Log.d(TAG, "RemoteException in granular toggle for sensor $sensor: ${e.message}")
-                granularSuccess = false
+                Log.w(TAG, "RemoteException in granular toggle for sensor $sensor: ${e.message}")
             } catch (t: Exception) {
-                Log.d(TAG, "Exception in granular toggle for sensor $sensor: ${t.message}")
-                granularSuccess = false
+                Log.w(TAG, "Exception in granular toggle for sensor $sensor: ${t.message}")
             } finally {
                 data.recycle()
                 reply.recycle()
             }
         }
 
-        return granularSuccess
+        return if (granularAcceptedCount == 2) {
+            BinderTransactionResult.TRANSACTION_ACCEPTED
+        } else {
+            lastErrorResult
+        }
     }
 
     /**
      * Executes direct low-level Binder transact for individual sensors (Camera, Mic) across Shizuku IPC.
+     * Note: These are internal Android sensor privacy service transaction mappings and may vary by Android version/OEM.
      */
-    fun invokeDirectIndividualSensorTransact(sensorId: String, turnOff: Boolean): Boolean {
-        val wrapper = getSensorPrivacyBinder() ?: return false
+    fun invokeDirectIndividualSensorTransact(sensorId: String, turnOff: Boolean): BinderTransactionResult {
+        val wrapper = getSensorPrivacyBinder() ?: return BinderTransactionResult.BINDER_ERROR
         val sensorCode = when (sensorId.lowercase()) {
             "camera" -> SensorPrivacyCodes.SENSOR_CAMERA
             "mic", "microphone" -> SensorPrivacyCodes.SENSOR_MICROPHONE
             else -> 0
         }
-        if (sensorCode == 0) return false
+        if (sensorCode == 0) return BinderTransactionResult.UNSUPPORTED
         val targetVal = if (turnOff) 1 else 0
 
-        // Direct Parcel Binder transaction via code 10
+        // Direct Parcel Binder transaction via known code 10
         val data = Parcel.obtain()
         val reply = Parcel.obtain()
         val currentUserId = getCurrentUserId()
@@ -718,20 +731,20 @@ object ShizukuManager {
             if (res) {
                 try {
                     reply.readException()
-                    true
+                    BinderTransactionResult.TRANSACTION_ACCEPTED
                 } catch (e: Exception) {
-                    Log.d(TAG, "Exception in readException for $sensorId: ${e.message}")
-                    false
+                    Log.w(TAG, "Exception in readException for $sensorId: ${e.message}")
+                    BinderTransactionResult.EXCEPTION
                 }
             } else {
-                false
+                BinderTransactionResult.TRANSACTION_ERROR
             }
         } catch (e: RemoteException) {
-            Log.d(TAG, "RemoteException in individual sensor transact $sensorId: ${e.message}")
-            false
+            Log.w(TAG, "RemoteException in individual sensor transact $sensorId: ${e.message}")
+            BinderTransactionResult.EXCEPTION
         } catch (t: Exception) {
-            Log.d(TAG, "Exception in individual sensor transact $sensorId: ${t.message}")
-            false
+            Log.w(TAG, "Exception in individual sensor transact $sensorId: ${t.message}")
+            BinderTransactionResult.EXCEPTION
         } finally {
             data.recycle()
             reply.recycle()
@@ -740,10 +753,10 @@ object ShizukuManager {
 
     /**
      * Main method to toggle SensorsOff state using direct SensorPrivacyManager system calls:
-     * 1. Direct AIDL Binder Transact via Shizuku
-     * 2. Direct WRITE_SECURE_SETTINGS ContentResolver write
-     * 3. Lean native shell command fallback
-     * 4. Asynchronous Settings table synchronization
+     * 1. Direct AIDL Binder Transact via Shizuku (with explicit transaction outcome)
+     * 2. Lean native shell command fallback using documented transaction codes
+     * 3. Authoritative read-back verification against the Android sensor privacy service
+     * 4. Compatibility Settings synchronization (never treated as authoritative state)
      * 5. SharedPreferences persistence
      */
     fun setSensorsOffState(context: Context, turnOff: Boolean, skipNotify: Boolean = false): Boolean {
@@ -760,45 +773,55 @@ object ShizukuManager {
             }
 
             // 1. Direct AIDL / Binder Transact via Shizuku
-            val directBinderSuccess = invokeDirectSensorPrivacyTransact(turnOff)
+            val directBinderResult = invokeDirectSensorPrivacyTransact(turnOff)
+            var directVerified = false
+            if (directBinderResult.isAccepted) {
+                val stateAfterBinder = getSensorsOffState(context)
+                if (stateAfterBinder.matchesRequested(turnOff)) {
+                    directVerified = true
+                }
+            }
 
-            // 2. Shell command fallback if direct Binder transact did not report success
-            if (!directBinderSuccess) {
+            // 2. Shell command fallback if direct Binder transact did not result in verified state
+            if (!directVerified) {
                 val txCodes = SensorPrivacyCodes.getAllSetGlobalCodes()
-                var shellSuccess = false
                 for (txCode in txCodes) {
                     val fastCommand = "service call sensor_privacy $txCode i32 $targetValue"
                     if (isShizukuRunning() && isShizukuAuthorized()) {
                         try {
                             val res = runShizukuCommand(fastCommand)
                             if (res.success) {
-                                shellSuccess = true
-                                break
+                                val stateAfterCmd = getSensorsOffState(context)
+                                if (stateAfterCmd.matchesRequested(turnOff)) {
+                                    break
+                                }
                             } else {
                                 Log.w(TAG, "Shizuku shell command with code $txCode returned exit code ${res.exitCode}: ${res.stderr}")
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Shizuku execution failed for code $txCode", e)
+                            Log.w(TAG, "Shizuku execution failed for code $txCode: ${e.message}")
                         }
                     }
 
-                    if (!shellSuccess && isRootAvailable()) {
+                    if (isRootAvailable()) {
                         try {
                             val res = runRootCommand(fastCommand)
                             if (res.success) {
-                                shellSuccess = true
-                                break
+                                val stateAfterCmd = getSensorsOffState(context)
+                                if (stateAfterCmd.matchesRequested(turnOff)) {
+                                    break
+                                }
                             } else {
                                 Log.w(TAG, "Root command with code $txCode returned exit code ${res.exitCode}: ${res.stderr}")
                             }
                         } catch (e: Exception) {
-                            Log.e(TAG, "Root SU execution failed for code $txCode", e)
+                            Log.w(TAG, "Root SU execution failed for code $txCode: ${e.message}")
                         }
                     }
                 }
             }
 
-            // 3. Authoritative read-back verification: verify actual hardware sensor state
+            // 3. Authoritative read-back verification: verify actual hardware sensor state from Android sensor privacy service
             var confirmedState = getSensorsOffState(context)
             if (!confirmedState.matchesRequested(turnOff)) {
                 try {
@@ -815,14 +838,15 @@ object ShizukuManager {
                 return false
             }
 
-            // 4. Synchronize Settings ONLY after authoritative verification succeeds
+            // 4. Compatibility synchronization ONLY: written after authoritative verification to synchronize external listeners.
+            // Note: Settings tables are NEVER treated as proof of sensor privacy state.
             val hasSecureSettings = hasSecureSettingsPermission(context)
             if (hasSecureSettings) {
                 try {
                     Settings.Global.putInt(context.contentResolver, "sensors_off", targetValue)
                     Settings.Secure.putInt(context.contentResolver, "sensor_privacy", targetValue)
                 } catch (e: Exception) {
-                    Log.d(TAG, "Settings write note: ${e.message}")
+                    Log.d(TAG, "Compatibility Settings write note: ${e.message}")
                 }
             }
 
@@ -877,33 +901,37 @@ object ShizukuManager {
             val targetVal = if (turnOff) 1 else 0
 
             // 1. Direct AIDL / Parcel Binder Transact via Shizuku
-            val directSuccess = invokeDirectIndividualSensorTransact(sensorId, turnOff)
+            val directResult = invokeDirectIndividualSensorTransact(sensorId, turnOff)
+            var directVerified = false
+            if (directResult.isAccepted) {
+                val stateAfterBinder = getIndividualSensorState(context, sensorId)
+                if (stateAfterBinder.matchesRequested(turnOff)) {
+                    directVerified = true
+                }
+            }
 
             val currentUserId = getCurrentUserId()
-            var shellSuccess = false
-            if (!directSuccess) {
+            if (!directVerified) {
                 val fastCmd = "service call sensor_privacy ${SensorPrivacyCodes.SET_TOGGLE_PRIVACY} i32 $currentUserId i32 ${SensorPrivacyCodes.SOURCE_QS_TILE} i32 $sensorCode i32 $targetVal"
                 if (isShizukuRunning() && isShizukuAuthorized()) {
                     try {
                         val res = runShizukuCommand(fastCmd)
-                        shellSuccess = res.success
-                        if (!shellSuccess) {
+                        if (!res.success) {
                             Log.w(TAG, "Shizuku individual sensor toggle command failed: ${res.stderr}")
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Shizuku individual sensor toggle failed", e)
+                        Log.w(TAG, "Shizuku individual sensor toggle exception: ${e.message}")
                     }
                 }
 
-                if (!shellSuccess && isRootAvailable()) {
+                if (isRootAvailable()) {
                     try {
                         val res = runRootCommand(fastCmd)
-                        shellSuccess = res.success
-                        if (!shellSuccess) {
+                        if (!res.success) {
                             Log.w(TAG, "Root individual sensor toggle command failed: ${res.stderr}")
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Root individual sensor toggle failed", e)
+                        Log.w(TAG, "Root individual sensor toggle exception: ${e.message}")
                     }
                 }
             }
@@ -970,33 +998,38 @@ object ShizukuManager {
             // 1. Direct Parcel Binder transact for both sensors
             val micDirect = invokeDirectIndividualSensorTransact("mic", turnOff)
             val camDirect = invokeDirectIndividualSensorTransact("camera", turnOff)
-            val directSuccess = micDirect && camDirect
+            val directAccepted = micDirect.isAccepted && camDirect.isAccepted
+            var directVerified = false
+            if (directAccepted) {
+                val confirmedCam = getIndividualSensorState(context, "camera")
+                val confirmedMic = getIndividualSensorState(context, "mic")
+                if (confirmedCam.matchesRequested(turnOff) && confirmedMic.matchesRequested(turnOff)) {
+                    directVerified = true
+                }
+            }
 
             // 2. Single combined native service call fallback
-            if (!directSuccess) {
+            if (!directVerified) {
                 val currentUserId = getCurrentUserId()
                 val fastCmd = "service call sensor_privacy 10 i32 $currentUserId i32 1 i32 1 i32 $targetVal ; service call sensor_privacy 10 i32 $currentUserId i32 1 i32 2 i32 $targetVal"
-                var shellSuccess = false
                 if (isShizukuRunning() && isShizukuAuthorized()) {
                     try {
                         val res = runShizukuCommand(fastCmd)
-                        shellSuccess = res.success
-                        if (!shellSuccess) {
+                        if (!res.success) {
                             Log.w(TAG, "Shizuku cam/mic toggle command failed: ${res.stderr}")
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Shizuku combined cam_mic toggle failed", e)
+                        Log.w(TAG, "Shizuku combined cam_mic toggle exception: ${e.message}")
                     }
                 }
-                if (!shellSuccess && isRootAvailable()) {
+                if (isRootAvailable()) {
                     try {
                         val res = runRootCommand(fastCmd)
-                        shellSuccess = res.success
-                        if (!shellSuccess) {
+                        if (!res.success) {
                             Log.w(TAG, "Root cam/mic toggle command failed: ${res.stderr}")
                         }
                     } catch (e: Exception) {
-                        Log.e(TAG, "Root combined cam_mic toggle failed", e)
+                        Log.w(TAG, "Root combined cam_mic toggle exception: ${e.message}")
                     }
                 }
             }

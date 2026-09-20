@@ -14,50 +14,56 @@ Each commit entry includes:
 ### [v2.7.9] - 2026-09-20
 
 ```git
-release(v2.7.9): implement authoritative tri-state sensor verification, package identity com.SensorsOff, and creator attribution
+release(v2.7.9): implement authoritative tri-state sensor verification, explicit binder results, polling elimination, and package identity com.SensorsOff
 
 Problem:
 1. Binary boolean returns in sensor state verification could treat failed queries, null values, or local SharedPreferences as valid confirmation of hardware sensor state.
-2. Toggles could report success even when the underlying system service state could not be verified.
-3. Automatic root start logic in BootCompletedReceiver violated on-demand constraints.
-4. Application ID required canonical com.SensorsOff identity and creator attribution to zakeer-career.
+2. Low-level Binder transact operations returned generic booleans, conflating IPC acceptance with confirmed hardware state changes.
+3. Periodic 2.5-second polling loop in SensorViewModel caused redundant background execution.
+4. Automatic root start logic in BootCompletedReceiver violated on-demand constraints.
+5. Application ID required canonical com.SensorsOff identity and creator attribution to zakeer-career.
 
 Root Cause:
 1. Binary booleans conflate FALSE with UNKNOWN, allowing false positives on unverified states.
 2. SharedPreferences was improperly used as a fallback source of truth during hardware toggle verification.
+3. IPC acceptance from Binder.transact() does not prove the remote sensor_privacy service mutated HAL state.
 
 Changes:
 - SensorPrivacyState.kt:
   * Introduced SensorPrivacyState enum (ENABLED, DISABLED, UNKNOWN) with matchesRequested() and isAuthoritative contracts.
+  * Introduced BinderTransactionResult enum (TRANSACTION_ACCEPTED, BINDER_ERROR, UNSUPPORTED, TRANSACTION_ERROR, EXCEPTION).
   * Introduced SensorToggleResult sealed class for explicit operational results.
 - ShizukuManager.kt:
+  * Converted invokeDirectSensorPrivacyTransact() and invokeDirectIndividualSensorTransact() to return BinderTransactionResult.
   * Converted queryDirectSensorPrivacy(), queryDirectToggleSensorPrivacy(), getSensorsOffState(), and getIndividualSensorState() to return SensorPrivacyState.
   * Guaranteed UNKNOWN is never treated as ENABLED or DISABLED.
   * Implemented post-toggle authoritative read-back verification against system service before persisting state.
   * Added process stream closures in finally blocks for runShizukuCommand and runRootCommand.
+  * Documented internal transaction mappings and OEM variance.
+- SensorViewModel.kt:
+  * Removed periodic 2.5-second polling loop, transitioning to 100% event-driven and lifecycle-driven updates (ContentObserver, onResume, Shizuku listeners).
+  * Refactored refreshState and contentObserver to consume SensorPrivacyState.
 - SensorsOffTileService.kt:
   * Refactored onStartListening and toggle worker loop to consume SensorPrivacyState.
-- SensorViewModel.kt:
-  * Refactored refreshState, contentObserver, and sync loops to handle SensorPrivacyState.
 - BootCompletedReceiver.kt:
   * Removed automatic root start logic to ensure 100% on-demand execution.
-- MainActivity.kt:
-  * Added creator attribution "Created by zakeer-career" and updated release highlights.
+- README.md:
+  * Refactored performance claims to use factual terminology ("Fast Quick Settings Integration", "Rapid hardware state switching").
 - app/build.gradle.kts:
   * Configured applicationId = "com.SensorsOff", versionCode = 36, versionName = "2.7.9".
 - ExampleRobolectricTest.kt:
-  * Added comprehensive unit tests for SensorPrivacyState, UNKNOWN state handling, verification rejection, and boot receiver.
+  * Added comprehensive unit tests for SensorPrivacyState, BinderTransactionResult, UNKNOWN state handling, verification rejection, and boot receiver.
 - .github/workflows/build-apk.yml:
   * Added automated unit test validation step before APK assembly on all pushes and pull requests.
   * Configured GitHub Release automation to attach versioned debug APKs (SensorsOff-v2.7.9-debug.apk) directly synchronized with repository source code.
-- ExampleRobolectricTest.kt, GreetingScreenshotTest.kt, robolectric.properties:
-  * Configured Robolectric test target SDK to API 34 to resolve DefaultSdkProvider unsupported SDK 36 exception in headless CI test runners.
+  * Added automated workflow artifact upload for full source code bundles (SensorsOff-Source-Code) alongside APK artifacts.
 
 Verification:
 - compile_applet: Build succeeded.
-- gradle :app:testDebugUnitTest: 100% passing (31/31 unit tests green in 58s).
+- gradle :app:testDebugUnitTest: 100% passing (32/32 unit tests green in 24s).
 - Package name verified: com.SensorsOff.
 - Creator verified: zakeer-career.
+- Static audit: 0 foreground services, 0 background daemons, 0 keep-alive services, 0 periodic polling timers.
 ```
 
 ---

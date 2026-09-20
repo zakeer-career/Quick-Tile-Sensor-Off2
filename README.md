@@ -48,14 +48,14 @@ It delivers fast on-demand hardware sensor toggling, real-time diagnostic teleme
 
 ## Key Capabilities
 
-- **Zero-Latency Quick Settings Integration**:
-  - Implements `ACTIVE_TILE` metadata to ensure the Quick Settings tile is permanently pre-warmed and never marked as `STATE_UNAVAILABLE` by Android `SystemUI`.
-  - Bi-directional real-time state synchronization between the app UI, SystemUI shade, and Android `ContentObserver`.
+- **Fast Quick Settings Integration**:
+  - Implements `ACTIVE_TILE` metadata to ensure the Quick Settings tile operates with minimal latency in Android `SystemUI`.
+  - Event-driven state synchronization between the app UI, SystemUI shade, and Android `ContentObserver`.
   - Supports configurable tile operation modes (Global Sensors Off, Selective Camera + Microphone privacy, or Custom matrices).
 
 - **Multi-Tiered Privileged Execution**:
   - **Shizuku API Integration**: Executes non-root elevated system commands via Shizuku's privileged AIDL Binder IPC.
-  - **Direct Root (su)**: Single-invocation compound process batching for instant hardware state switching.
+  - **Direct Root (su)**: Single-invocation compound process batching for rapid hardware state switching.
   - **ADB Secure Settings (`WRITE_SECURE_SETTINGS`)**: Native non-root permission flow.
 
 - **Real-Time Sensor Telemetry & Diagnostics**:
