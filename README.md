@@ -6,7 +6,7 @@
 
 
 [![Platform](https://img.shields.io/badge/Platform-Android-3DDC84.svg?style=flat&logo=android)](https://www.android.com)
-[![Release](https://img.shields.io/badge/Release-v2.7.9-brightgreen.svg?style=flat)](https://github.com/LinerSRT/SensorsOff)
+[![Release](https://img.shields.io/badge/Release-v2.8.0-brightgreen.svg?style=flat)](https://github.com/LinerSRT/SensorsOff)
 [![API](https://img.shields.io/badge/API-29%2B-blue.svg?style=flat)](https://developer.android.com/about/versions/10)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack%20Compose%20%2F%20Material%203-4285F4.svg?logo=jetpackcompose)](https://developer.android.com/jetpack/compose)

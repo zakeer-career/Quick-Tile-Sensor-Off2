@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.8.0 - Production Release: Version Promotion & Architecture Hardening](#v280---production-release-version-promotion--architecture-hardening)
 - [v2.7.9 - Production Release: com.SensorsOff Application ID & Creator Attribution](#v279---production-release-comsensorsoff-application-id--creator-attribution)
 - [v2.7.8 - Removal of POST_NOTIFICATIONS Permission & Alignment of On-Demand Changelog Copy](#v278---removal-of-post_notifications-permission--alignment-of-on-demand-changelog-copy)
 - [v2.7.7 - Purge of Obsolete Keep-Alive UI and Preferences for Pure On-Demand Operation](#v277---purge-of-obsolete-keep-alive-ui-and-preferences-for-pure-on-demand-operation)
@@ -39,6 +40,30 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.8.0] - Production Release: Version Promotion & Architecture Hardening
+
+#### Problem Analysis
+- **Version Lifecycle Alignment**:
+  - The project required semantic version bump from `2.7.9` (`versionCode 36`) to `2.8.0` (`versionCode 37`) to finalize release milestones incorporating architecture hardening, removal of root auto-start routines, purging of direct Settings writes, and strongly typed shell helpers.
+- **Verification Integrity**:
+  - All unit, state-machine, and Robolectric test suites required verification under the new version descriptor with package ID `com.SensorsOff`.
+
+#### Root Cause
+- Standard release promotion consolidating security refactoring, zero-daemon lifecycle conformance, and authoritative tri-state sensor verification.
+
+#### Engineered Resolution & Impact
+1. **Version Configuration**:
+   - Updated `versionCode = 37` and `versionName = "2.8.0"` in `app/build.gradle.kts`.
+   - Updated UI changelog header to `WHAT'S NEW IN V2.8.0` in `MainActivity.kt`.
+   - Updated release badge in `README.md`.
+2. **Architecture Consolidation**:
+   - Reaffirmed authoritative Android sensor privacy service verification via direct Binder transactions and `SensorPrivacyManager` reflection.
+   - Enforced zero-daemon on-demand execution model.
+3. **Verification**:
+   - All unit test assertions confirmed green.
 
 ---
 

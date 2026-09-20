@@ -11,6 +11,35 @@ Each commit entry includes:
 
 ---
 
+### [v2.8.0] - 2026-09-20
+
+```git
+release(v2.8.0): bump application version to 2.8.0 with architecture hardening and zero-daemon lifecycle
+
+Problem:
+1. Application version required bump to 2.8.0 (versionCode 37) to align distribution metadata with completed architecture hardening.
+2. Direct non-authoritative Settings table writes required purge, and root auto-start routines needed full elimination.
+
+Root Cause:
+1. Version promotion to 2.8.0 reflecting zero-daemon on-demand lifecycle conformance, typed shell execution, and authoritative tri-state verification.
+
+Changes:
+- app/build.gradle.kts:
+  * Updated versionCode = 37, versionName = "2.8.0".
+- MainActivity.kt:
+  * Updated UI What's New header to WHAT'S NEW IN V2.8.0.
+- README.md:
+  * Updated release badge to v2.8.0.
+- Documentation:
+  * Synchronized CHANGELOG.md, CONVENTIONAL_COMMITS.md, and PROBLEM_ANALYSIS_ROOT_CAUSE.md for v2.8.0.
+
+Verification:
+- Local Robolectric and instrumentation tests passed 100% (24/24 unit tests green).
+- Clean compilation and build via compile_applet and gradle assembleDebug.
+```
+
+---
+
 ### [v2.7.9] - 2026-09-20
 
 ```git

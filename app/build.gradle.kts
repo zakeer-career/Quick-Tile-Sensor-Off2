@@ -17,8 +17,8 @@ android {
     applicationId = "com.SensorsOff"
     minSdk = 24
     targetSdk = 36
-    versionCode = 36
-    versionName = "2.7.9" 
+    versionCode = 37
+    versionName = "2.8.0" 
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

@@ -2032,7 +2032,7 @@ fun SleekAboutTabContent(
 
                         Column {
                             Text(
-                                text = "WHAT'S NEW IN V2.7.9",
+                                text = "WHAT'S NEW IN V2.8.0",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = colors.accentBlue,

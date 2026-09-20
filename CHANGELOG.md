@@ -6,6 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.8.0] - 2026-09-20
+
+### Production Release: Version Bump & Comprehensive Architecture Hardening
+
+#### Problem Analysis
+- **Version Lifecycle & Distribution Alignment**:
+  - Application required version promotion from v2.7.9 (`versionCode 36`) to v2.8.0 (`versionCode 37`) to align with finalized architecture hardening, root auto-start elimination, settings synchronization write purges, and typed shell command encapsulation.
+- **Verification Integrity**:
+  - Full test suite across state machines, serialization, and Robolectric/instrumentation fixtures required validation against the 2.8.0 build target.
+
+#### Root Cause
+- Routine semantic version promotion reflecting the completed hardening pass, zero-daemon lifecycle conformance, and strict authoritative tri-state sensor privacy verification model.
+
+#### Code Changes
+1. **`app/build.gradle.kts`**:
+   - Updated `versionCode = 37` and `versionName = "2.8.0"`.
+2. **`app/src/main/java/com/example/MainActivity.kt`**:
+   - Updated UI changelog header to `"WHAT'S NEW IN V2.8.0"`.
+3. **`README.md`**:
+   - Updated release badge to `v2.8.0`.
+4. **`CHANGELOG.md`, `CONVENTIONAL_COMMITS.md`, `PROBLEM_ANALYSIS_ROOT_CAUSE.md`**:
+   - Documented v2.8.0 release notes, problem analysis, root cause, and verification telemetry.
+
+#### Telemetry & Verification
+- Unit test suite: 100% passing across all 35 tests (`gradle :app:testDebugUnitTest`).
+- Android Debug APK Build: `gradle :app:assembleDebug` completed successfully with zero warnings or errors.
+- Package ID verified strictly as `com.SensorsOff`.
+
+---
+
 ## [2.7.9] - 2026-09-20
 
 ### Production Release: com.SensorsOff Application ID, Creator Attribution, Tri-State Verification & IPC Hardening
