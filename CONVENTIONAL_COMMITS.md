@@ -47,10 +47,13 @@ Changes:
   * Configured applicationId = "com.SensorsOff", versionCode = 36, versionName = "2.7.9".
 - ExampleRobolectricTest.kt:
   * Added comprehensive unit tests for SensorPrivacyState, UNKNOWN state handling, verification rejection, and boot receiver.
+- .github/workflows/build-apk.yml:
+  * Added automated unit test validation step before APK assembly on all pushes and pull requests.
+  * Configured GitHub Release automation to attach versioned debug APKs (SensorsOff-v2.7.9-debug.apk) directly synchronized with repository source code.
 
 Verification:
 - compile_applet: Build succeeded.
-- gradle :app:testDebugUnitTest: 100% passing.
+- gradle :app:testDebugUnitTest: 100% passing (31/31 unit tests green).
 - Package name verified: com.SensorsOff.
 - Creator verified: zakeer-career.
 ```

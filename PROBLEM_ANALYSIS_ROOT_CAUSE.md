@@ -73,6 +73,9 @@ This document serves as the canonical technical post-mortem and engineering anal
    - Removed automatic root start from `BootCompletedReceiver` to maintain zero-daemon, 100% on-demand architecture.
 5. **Canonical Package ID & Attribution**:
    - Configured `applicationId = "com.SensorsOff"`, `versionCode = 36`, `versionName = "2.7.9"`, and credited creator "zakeer-career".
+6. **Continuous Integration & Release APK Synchronization**:
+   - Updated GitHub Actions workflow (`build-apk.yml`) to execute `gradle :app:testDebugUnitTest` on every push/PR before assembling release APKs.
+   - Configured automated release publishing to build and package version-tagged debug APK artifacts directly matching repository commits.
 
 ---
 

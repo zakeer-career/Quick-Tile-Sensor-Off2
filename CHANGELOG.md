@@ -42,10 +42,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
    - Removed automatic root start logic to adhere strictly to on-demand architecture.
 6. **`app/src/test/java/com/example/ExampleRobolectricTest.kt`**:
    - Added unit tests for `SensorPrivacyState` state contracts, rejection of unverified/unknown states, and non-daemon boot receiver behavior.
+7. **`.github/workflows/build-apk.yml` & `README.md`**:
+   - Enforced automated unit test execution (`testDebugUnitTest`) before debug APK assembly on all pushes and pull requests.
+   - Configured GitHub Release automation to attach versioned release APK binaries (`SensorsOff-v${VERSION}-debug.apk`) directly matching repository source commits.
+   - Updated README documentation, badges, and ADB setup commands to reflect `com.SensorsOff` and v2.7.9.
 
 #### Telemetry & Verification
 - `compile_applet`: Build succeeded.
-- `ExampleRobolectricTest`: 100% tests passing.
+- `ExampleRobolectricTest`: 100% tests passing (31/31 unit tests green).
 - Package ID: `com.SensorsOff`.
 - Creator: `zakeer-career`.
 

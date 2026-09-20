@@ -6,14 +6,14 @@
 
 
 [![Platform](https://img.shields.io/badge/Platform-Android-3DDC84.svg?style=flat&logo=android)](https://www.android.com)
-[![Release](https://img.shields.io/badge/Release-v2.0-brightgreen.svg?style=flat)](https://github.com/LinerSRT/SensorsOff)
+[![Release](https://img.shields.io/badge/Release-v2.7.9-brightgreen.svg?style=flat)](https://github.com/LinerSRT/SensorsOff)
 [![API](https://img.shields.io/badge/API-29%2B-blue.svg?style=flat)](https://developer.android.com/about/versions/10)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Jetpack Compose](https://img.shields.io/badge/UI-Jetpack%20Compose%20%2F%20Material%203-4285F4.svg?logo=jetpackcompose)](https://developer.android.com/jetpack/compose)
 
-**SensorsOff** is an enterprise-grade Android privacy utility and system service management application designed to control hardware sensor privacy states (`SensorPrivacyManager`) across Android 10+ (API 29 to API 34+). 
+**SensorsOff** is an open-source Android privacy utility and system service management application designed to control hardware sensor privacy states (`SensorPrivacyManager`) across Android 10+ (API 29 to API 34+). 
 
-It delivers zero-latency hardware sensor toggling, real-time diagnostic telemetry, and persistent Quick Settings tile synchronization with multiple privileged backend execution pipelines.
+It delivers fast on-demand hardware sensor toggling, real-time diagnostic telemetry, and persistent Quick Settings tile synchronization with multiple privileged backend execution pipelines.
 
 ---
 
@@ -97,7 +97,7 @@ Their initial work on system sensor privacy controls on Android provided the bas
 ### Option 2: ADB Command Line
 Grant elevated secure settings permissions via Android Debug Bridge:
 ```bash
-adb shell pm grant com.aistudio.sensorsoff android.permission.WRITE_SECURE_SETTINGS
+adb shell pm grant com.SensorsOff android.permission.WRITE_SECURE_SETTINGS
 ```
 
 ---
