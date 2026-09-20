@@ -6,9 +6,6 @@ import android.content.Context
 import android.content.Intent
 import android.service.quicksettings.TileService
 import android.util.Log
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 /**
  * Receiver that listens to system events like boot, update, or device unlock
@@ -31,22 +28,11 @@ class BootCompletedReceiver : BroadcastReceiver() {
                 "Device boot trigger: $action"
             )
 
-            // 1. Pre-warm Quick Settings tile
+            // Pre-warm Quick Settings tile
             TileService.requestListeningState(
                 context,
                 ComponentName(context, SensorsOffTileService::class.java)
             )
-
-            // 2. If device is rooted and Shizuku is down, try auto-starting Shizuku daemon
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    if (ShizukuManager.isRootAvailable() && !ShizukuManager.isShizukuRunning()) {
-                        ShizukuManager.tryAutoStartShizukuViaRoot(context)
-                    }
-                } catch (e: Exception) {
-                    Log.d("BootCompletedReceiver", "Root auto-start note: ${e.message}")
-                }
-            }
         } catch (e: SecurityException) {
             Log.e("BootCompletedReceiver", "SecurityException processing boot event", e)
         } catch (e: Exception) {

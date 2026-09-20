@@ -42,25 +42,37 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ---
 
-### [v2.7.9] - Production Release: com.SensorsOff Application ID & Creator Attribution
+### [v2.7.9] - Production Release: com.SensorsOff Application ID, Creator Attribution & Authoritative Tri-State Verification
 
 #### Problem Analysis
+- **Authoritative Sensor State Verification**:
+  - The previous implementation used binary booleans to represent sensor privacy state.
+  - A query failure, exception, or uninitialized cache could return `false` or fall back to local `SharedPreferences` / `Settings` values, treating them as verified truth.
+  - Verification could mistakenly report SUCCESS when the actual system service state could not be read or confirmed.
+- **On-Demand Lifecycle & Boot Cleanliness**:
+  - `BootCompletedReceiver` attempted an automatic root launch of Shizuku, violating the strict on-demand architecture mandate.
 - **Placeholder Application ID & Creator Visibility**:
-  - The application used a temporary identifier (`com.aistudio.sensorsoff.pomujq`) instead of the canonical `com.SensorsOff`.
-  - The creator "zakeer-career" was not credited in the UI or resource metadata.
-- **Production Versioning**:
-  - Version incremented to 2.7.9 (versionCode 36) to consolidate the completed production hardening, shell stream safety, and re-branding.
+  - The application retained a generated placeholder ID (`com.aistudio.sensorsoff.pomujq`) instead of the canonical `com.SensorsOff`.
+  - Creator "zakeer-career" required explicit attribution in app metadata and user interface.
 
 #### Root Cause
-- Final productionization milestone completing the transition from experimental testing to a branded, author-attributed release.
+- Binary booleans conflate FALSE (sensors available) with UNKNOWN (query failed or unverified).
+- Fallback layers (SharedPreferences, Settings tables) are not authoritative hardware truth; only the Android sensor privacy service via Binder transact or SensorPrivacyManager reflection constitutes authoritative truth.
 
 #### Engineered Resolution & Impact
-1. **Package ID Update**:
-   - Configured `applicationId = "com.SensorsOff"` in `app/build.gradle.kts`.
-2. **Creator Attribution**:
-   - Added `creator_name` string resource and displayed "Created by zakeer-career" badge and system specification info in `MainActivity.kt`.
-3. **Version Increment**:
-   - Updated `versionCode = 36` and `versionName = "2.7.9"`.
+1. **Tri-State Sensor Privacy Engine (`SensorPrivacyState`)**:
+   - Introduced `SensorPrivacyState` enum (`ENABLED`, `DISABLED`, `UNKNOWN`) and `SensorToggleResult` sealed class.
+   - `UNKNOWN` is strictly treated as unverified and never interpreted as `ENABLED` or `DISABLED`.
+   - `matchesRequested(requestedSensorsOff)` guarantees that an `UNKNOWN` state always fails verification.
+2. **Authoritative Post-Toggle Verification**:
+   - `setSensorsOffState`, `setIndividualSensorState`, and `setCamMicSensorState` strictly query actual hardware sensor state from the system service after IPC execution.
+   - Only upon confirmed verification is local persistence (`SharedPreferences`) updated and success reported.
+3. **Stream Resource Management**:
+   - `runShizukuCommand` and `runRootCommand` explicitly close input, output, and error streams within `finally` blocks.
+4. **On-Demand Boot Receiver**:
+   - Removed automatic root start from `BootCompletedReceiver` to maintain zero-daemon, 100% on-demand architecture.
+5. **Canonical Package ID & Attribution**:
+   - Configured `applicationId = "com.SensorsOff"`, `versionCode = 36`, `versionName = "2.7.9"`, and credited creator "zakeer-career".
 
 ---
 

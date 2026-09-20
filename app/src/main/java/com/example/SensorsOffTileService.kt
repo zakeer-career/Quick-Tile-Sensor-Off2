@@ -131,17 +131,15 @@ class SensorsOffTileService : TileService() {
                     blockMode = cachedBlockMode
                 )
 
-                val confirmed = if (cachedBlockMode == "cam_mic") {
-                    val globalState = ShizukuManager.getSensorsOffState(applicationContext)
-                    ShizukuManager.getIndividualSensorState(applicationContext, "camera", knownGlobalState = globalState) ||
-                            ShizukuManager.getIndividualSensorState(applicationContext, "mic", knownGlobalState = globalState)
+                val confirmedState = if (cachedBlockMode == "cam_mic") {
+                    ShizukuManager.getCamMicCombinedState(applicationContext)
                 } else {
                     ShizukuManager.getSensorsOffState(applicationContext)
                 }
 
                 withContext(Dispatchers.Main) {
                     pendingTargetState = null
-                    updateTileState(confirmed)
+                    updateTileState(confirmedState)
                 }
             }
         }
@@ -226,17 +224,19 @@ class SensorsOffTileService : TileService() {
         // 2. Fast asynchronous query to keep tile in sync
         listeningJob = serviceScope.launch(Dispatchers.IO) {
             try {
-                val isSensorsOff = if (cachedBlockMode == "cam_mic") {
-                    val globalState = ShizukuManager.getSensorsOffState(applicationContext)
-                    ShizukuManager.getIndividualSensorState(applicationContext, "camera", knownGlobalState = globalState) ||
-                            ShizukuManager.getIndividualSensorState(applicationContext, "mic", knownGlobalState = globalState)
+                val currentState = if (cachedBlockMode == "cam_mic") {
+                    ShizukuManager.getCamMicCombinedState(applicationContext)
                 } else {
                     ShizukuManager.getSensorsOffState(applicationContext)
                 }
 
                 if (pendingTargetState == null || System.currentTimeMillis() >= pendingTargetExpiryTimeMs) {
                     withContext(Dispatchers.Main) {
-                        updateTileState(isSensorsOff)
+                        if (currentState.isAuthoritative) {
+                            updateTileState(currentState)
+                        } else {
+                            refreshTileImmediately()
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -255,30 +255,18 @@ class SensorsOffTileService : TileService() {
     private fun refreshTileImmediately() {
         try {
             val now = System.currentTimeMillis()
-            val isSensorsOff = if (pendingTargetState != null && now < pendingTargetExpiryTimeMs) {
-                pendingTargetState!!
-            } else {
-                val globalVal = try {
-                    Settings.Global.getInt(applicationContext.contentResolver, "sensors_off", -1)
-                } catch (e: SecurityException) {
-                    Log.d(TAG, "Settings.Global security note: ${e.message}")
-                    -1
-                } catch (e: Exception) {
-                    Log.d(TAG, "Settings.Global read note: ${e.message}")
-                    -1
-                }
-                if (globalVal != -1) {
-                    globalVal == 1
-                } else {
-                    val prefs = applicationContext.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
-                    if (cachedBlockMode == "cam_mic") {
-                        prefs.getBoolean("sensor_blocked_camera", false) || prefs.getBoolean("sensor_blocked_mic", false)
-                    } else {
-                        prefs.getBoolean("sensors_off_enabled", false)
-                    }
-                }
+            if (pendingTargetState != null && now < pendingTargetExpiryTimeMs) {
+                updateTileState(pendingTargetState == true)
+                return
             }
-            updateTileState(isSensorsOff)
+
+            val cachedState = if (cachedBlockMode == "cam_mic") {
+                val prefs = applicationContext.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
+                prefs.getBoolean("sensor_blocked_camera", false) || prefs.getBoolean("sensor_blocked_mic", false)
+            } else {
+                ShizukuManager.getCachedUiPreferenceState(applicationContext)
+            }
+            updateTileState(cachedState)
         } catch (e: Exception) {
             Log.e(TAG, "Error in immediate tile refresh", e)
         }
@@ -384,14 +372,25 @@ class SensorsOffTileService : TileService() {
         }
     }
 
-    private fun updateTileState(isSensorsOff: Boolean) {
+    private fun updateTileState(state: SensorPrivacyState) {
         val tile = qsTile ?: return
 
-        val targetState = if (isSensorsOff) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
-        val targetIcon = if (isSensorsOff) cachedActiveIcon else cachedInactiveIcon
-        val targetSubtitle = if (isSensorsOff) cachedActiveSubtitle else cachedDisabledSubtitle
+        val targetState = when (state) {
+            SensorPrivacyState.ENABLED -> Tile.STATE_ACTIVE
+            SensorPrivacyState.DISABLED -> Tile.STATE_INACTIVE
+            SensorPrivacyState.UNKNOWN -> Tile.STATE_INACTIVE
+        }
+        val targetIcon = when (state) {
+            SensorPrivacyState.ENABLED -> cachedActiveIcon
+            SensorPrivacyState.DISABLED -> cachedInactiveIcon
+            SensorPrivacyState.UNKNOWN -> cachedInactiveIcon
+        }
+        val targetSubtitle = when (state) {
+            SensorPrivacyState.ENABLED -> cachedActiveSubtitle
+            SensorPrivacyState.DISABLED -> cachedDisabledSubtitle
+            SensorPrivacyState.UNKNOWN -> "Unknown"
+        }
 
-        // Optimization: Redundant IPC check. If the tile is already configured, don't ping SystemUI
         if (tile.state == targetState &&
             tile.label == cachedDisplayLabel &&
             (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || tile.subtitle == targetSubtitle)) {
@@ -405,6 +404,10 @@ class SensorsOffTileService : TileService() {
         }
         targetIcon?.let { tile.icon = it }
         tile.updateTile()
+    }
+
+    private fun updateTileState(isSensorsOff: Boolean) {
+        updateTileState(if (isSensorsOff) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED)
     }
 }
 

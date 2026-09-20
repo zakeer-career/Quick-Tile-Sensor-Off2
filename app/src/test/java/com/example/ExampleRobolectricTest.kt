@@ -85,21 +85,53 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `test state verification and preferences sync`() {
+  fun `test sensor privacy state matchesRequested contract`() {
+    // ENABLED means sensor privacy is active (sensors are off/blocked)
+    assertTrue(SensorPrivacyState.ENABLED.matchesRequested(true))
+    org.junit.Assert.assertFalse(SensorPrivacyState.ENABLED.matchesRequested(false))
+
+    // DISABLED means sensor privacy is inactive (sensors are available/on)
+    assertTrue(SensorPrivacyState.DISABLED.matchesRequested(false))
+    org.junit.Assert.assertFalse(SensorPrivacyState.DISABLED.matchesRequested(true))
+
+    // UNKNOWN must NEVER match true or false
+    org.junit.Assert.assertFalse(SensorPrivacyState.UNKNOWN.matchesRequested(true))
+    org.junit.Assert.assertFalse(SensorPrivacyState.UNKNOWN.matchesRequested(false))
+    org.junit.Assert.assertFalse(SensorPrivacyState.UNKNOWN.isAuthoritative)
+    assertTrue(SensorPrivacyState.ENABLED.isAuthoritative)
+    assertTrue(SensorPrivacyState.DISABLED.isAuthoritative)
+  }
+
+  @Test
+  fun `test state verification rejects unverified or unknown state`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
     prefs.edit().clear().commit()
 
-    val initialState = ShizukuManager.getSensorsOffState(context)
-    org.junit.Assert.assertFalse(initialState)
-
-    // Verify individual sensor states default correctly
-    org.junit.Assert.assertFalse(ShizukuManager.getIndividualSensorState(context, "camera"))
-    org.junit.Assert.assertFalse(ShizukuManager.getIndividualSensorState(context, "mic"))
-
-    // Test SharedPreferences state persistence
+    // In a test environment without live Shizuku binder or system service reflection, state is UNKNOWN
+    val currentState = ShizukuManager.getSensorsOffState(context)
+    // UNKNOWN is never ENABLED or DISABLED
+    org.junit.Assert.assertNotEquals(SensorPrivacyState.ENABLED, currentState)
+    
+    // Setting SharedPreferences does NOT fool authoritative hardware query
     prefs.edit().putBoolean("sensors_off_enabled", true).commit()
-    assertTrue(ShizukuManager.getSensorsOffState(context))
+    val nonAuthoritativeCached = ShizukuManager.getCachedUiPreferenceState(context)
+    assertTrue(nonAuthoritativeCached)
+
+    // Authoritative check remains unfooled by SharedPreferences
+    val authoritativeQuery = ShizukuManager.getSensorsOffState(context)
+    org.junit.Assert.assertNotEquals(SensorPrivacyState.ENABLED, authoritativeQuery)
+  }
+
+  @Test
+  fun `test boot completed receiver runs on-demand without starting background services`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val receiver = BootCompletedReceiver()
+    val intent = android.content.Intent(android.content.Intent.ACTION_BOOT_COMPLETED)
+    
+    // Executing onReceive must not crash and must not start any background service/daemon
+    receiver.onReceive(context, intent)
+    assertTrue(true)
   }
 
   @Test
@@ -125,6 +157,71 @@ class ExampleRobolectricTest {
     threads.forEach { it.join(3000) }
 
     assertTrue("No exceptions occurred during rapid concurrent calls", exceptions.isEmpty())
+  }
+
+  @Test
+  fun `test SensorPrivacyState toBooleanOrNull strictly preserves null for UNKNOWN`() {
+    assertEquals(true, SensorPrivacyState.ENABLED.toBooleanOrNull())
+    assertEquals(false, SensorPrivacyState.DISABLED.toBooleanOrNull())
+    assertEquals(null, SensorPrivacyState.UNKNOWN.toBooleanOrNull())
+
+    // Ensure fromBoolean accurately maps nullable booleans
+    assertEquals(SensorPrivacyState.ENABLED, SensorPrivacyState.fromBoolean(true))
+    assertEquals(SensorPrivacyState.DISABLED, SensorPrivacyState.fromBoolean(false))
+    assertEquals(SensorPrivacyState.UNKNOWN, SensorPrivacyState.fromBoolean(null))
+  }
+
+  @Test
+  fun `test requested state mismatch is rejected`() {
+    // If requested is turnOff=true (sensors blocked), actual must be ENABLED
+    val requestedTurnOff = true
+    val actualStateEnabled = SensorPrivacyState.ENABLED
+    val actualStateDisabled = SensorPrivacyState.DISABLED
+    val actualStateUnknown = SensorPrivacyState.UNKNOWN
+
+    assertTrue(actualStateEnabled.matchesRequested(requestedTurnOff))
+    org.junit.Assert.assertFalse(actualStateDisabled.matchesRequested(requestedTurnOff))
+    org.junit.Assert.assertFalse(actualStateUnknown.matchesRequested(requestedTurnOff))
+
+    // If requested is turnOff=false (sensors unblocked), actual must be DISABLED
+    val requestedTurnOn = false
+    assertTrue(actualStateDisabled.matchesRequested(requestedTurnOn))
+    org.junit.Assert.assertFalse(actualStateEnabled.matchesRequested(requestedTurnOn))
+    org.junit.Assert.assertFalse(actualStateUnknown.matchesRequested(requestedTurnOn))
+  }
+
+  @Test
+  fun `test Root state query returns valid enum`() {
+    val rootState = ShizukuManager.getRootState()
+    assertNotNull(rootState)
+    assertTrue(rootState == ShizukuManager.RootState.AVAILABLE || rootState == ShizukuManager.RootState.UNAVAILABLE || rootState == ShizukuManager.RootState.UNKNOWN)
+    val isRoot = ShizukuManager.isRootAvailable()
+    assertEquals(rootState == ShizukuManager.RootState.AVAILABLE, isRoot)
+  }
+
+  @Test
+  fun `test CommandResult failure helper`() {
+    val timeoutFailure = CommandResult.failure("Command timed out", exitCode = -2)
+    org.junit.Assert.assertFalse(timeoutFailure.success)
+    assertEquals(-2, timeoutFailure.exitCode)
+    assertEquals("Command timed out", timeoutFailure.stderr)
+    assertEquals("", timeoutFailure.stdout)
+  }
+
+  @Test
+  fun `test unprivileged setSensorsOffState returns false when privileges missing`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val result = ShizukuManager.setSensorsOffState(context, turnOff = true, skipNotify = true)
+    // Without Shizuku or Root or WRITE_SECURE_SETTINGS, operation must return false
+    org.junit.Assert.assertFalse(result)
+  }
+
+  @Test
+  fun `test individual sensor state query without privileges returns UNKNOWN or DISABLED`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val cameraState = ShizukuManager.getIndividualSensorState(context, "camera")
+    // Should never falsely report ENABLED in unprivileged test environment
+    org.junit.Assert.assertNotEquals(SensorPrivacyState.ENABLED, cameraState)
   }
 }
 

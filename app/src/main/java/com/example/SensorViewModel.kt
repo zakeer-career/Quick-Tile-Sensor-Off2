@@ -104,11 +104,12 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             observerJob?.cancel()
             observerJob = viewModelScope.launch(Dispatchers.IO) {
                 delay(80) // Debounce multiple rapid settings broadcasts
-                val isOff = ShizukuManager.getSensorsOffState(context)
+                val privacyState = ShizukuManager.getSensorsOffState(context)
+                val isOff = (privacyState == SensorPrivacyState.ENABLED)
                 if (lastObservedSensorOffState != isOff) {
                     lastObservedSensorOffState = isOff
-                    addLog("Detected system sensor privacy change -> SensorsOff = $isOff", category = LogCategory.SYSTEM)
-                    TileLogManager.logSystemEvent(context, "System Privacy State Change", "ContentObserver triggered | sensors_off = $isOff")
+                    addLog("Detected system sensor privacy change -> SensorsOff = $isOff ($privacyState)", category = LogCategory.SYSTEM)
+                    TileLogManager.logSystemEvent(context, "System Privacy State Change", "ContentObserver triggered | state = $privacyState")
                 }
                 refreshState()
             }
@@ -164,11 +165,12 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 Log.w("SensorViewModel", "ContentObserver registration note: ${e.message}")
             }
 
-            // Periodic background sync loop (every 2.5s) to guarantee real-time tile & UI freshness
+            // Periodic sync loop while ViewModel is active
             viewModelScope.launch(Dispatchers.IO) {
                 while (isActive) {
                     delay(2500)
-                    val liveOff = ShizukuManager.getSensorsOffState(context)
+                    val liveState = ShizukuManager.getSensorsOffState(context)
+                    val liveOff = (liveState == SensorPrivacyState.ENABLED)
                     if (liveOff != _uiState.value.isSensorsOff) {
                         refreshState()
                     }
@@ -217,7 +219,8 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             val isRoot = ShizukuManager.isRootAvailable()
             val hasPermission = ShizukuManager.hasSecureSettingsPermission(context)
             val adbCmd = ShizukuManager.getAdbGrantCommand(context)
-            val isOff = ShizukuManager.getSensorsOffState(context)
+            val privacyState = ShizukuManager.getSensorsOffState(context)
+            val isOff = (privacyState == SensorPrivacyState.ENABLED)
 
             val tileIconStyle = ShizukuManager.getTileIconStyle(context)
             val tileLabelText = ShizukuManager.getTileLabelText(context)
@@ -231,15 +234,24 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             val launcherAlias = ShizukuManager.getAppLauncherAlias(context)
 
             val updatedSensors = _uiState.value.sensorList.map { sensor ->
-                val sensorBlocked = ShizukuManager.getIndividualSensorState(context, sensor.id, knownGlobalState = isOff)
+                val sensorState = ShizukuManager.getIndividualSensorState(context, sensor.id, knownGlobalState = privacyState)
+                val sensorBlocked = (sensorState == SensorPrivacyState.ENABLED)
                 sensor.copy(isBlocked = sensorBlocked)
             }
 
-            val stateName = if (isOff) "STATE_ACTIVE (2)" else "STATE_INACTIVE (1)"
+            val stateName = when (privacyState) {
+                SensorPrivacyState.ENABLED -> "STATE_ACTIVE (2)"
+                SensorPrivacyState.DISABLED -> "STATE_INACTIVE (1)"
+                SensorPrivacyState.UNKNOWN -> "STATE_UNAVAILABLE (0)"
+            }
             TileLogManager.updateTileDiagnostics(
                 context,
                 lastState = stateName,
-                lastAction = if (isOff) "System Sensor Privacy ON" else "System Sensor Privacy OFF",
+                lastAction = when (privacyState) {
+                    SensorPrivacyState.ENABLED -> "System Sensor Privacy ON"
+                    SensorPrivacyState.DISABLED -> "System Sensor Privacy OFF"
+                    SensorPrivacyState.UNKNOWN -> "System Sensor Privacy UNKNOWN"
+                },
                 blockMode = tileBlockMode,
                 label = tileLabelText,
                 iconStyle = tileIconStyle

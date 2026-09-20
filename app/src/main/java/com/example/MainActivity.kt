@@ -2032,14 +2032,14 @@ fun SleekAboutTabContent(
 
                         Column {
                             Text(
-                                text = "WHAT'S NEW IN V2.6",
+                                text = "WHAT'S NEW IN V2.7.9",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = colors.accentBlue,
                                 letterSpacing = 1.2.sp
                             )
                             Text(
-                                text = "Maximum Performance & Zero-Hitch Architecture",
+                                text = "Authoritative State Verification & On-Demand Architecture",
                                 fontSize = 11.sp,
                                 color = colors.textSecondary
                             )
@@ -2049,10 +2049,10 @@ fun SleekAboutTabContent(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     val changelogHighlights = listOf(
-                        "Zero-Allocation Touch Path" to "Pre-cached Icon and String handles in RAM ensure zero memory allocations and instantaneous UI flips on every tap.",
-                        "Direct Binder IPC" to "Native SensorPrivacy Binder IPC, completely bypassing shell process fork overhead.",
-                        "Real-time ContentObserver" to "Instant zero-polling synchronization with Android Settings.Global & Settings.Secure sensor keys.",
-                        "Redundant IPC Elimination" to "Eliminated redundant updateTile() calls to SystemUI, preserving 120Hz/90Hz Quick Settings shade fluidity.",
+                        "Authoritative Tri-State Verification" to "Hardware state verification against Android sensor privacy service (ENABLED, DISABLED, UNKNOWN) prevents ambiguous toggles.",
+                        "Direct Binder IPC" to "SensorPrivacy Binder IPC via Shizuku with native fallback.",
+                        "ContentObserver Synchronization" to "Synchronized state observation with Android Settings sensor keys.",
+                        "Redundant IPC Elimination" to "Eliminated redundant updateTile() calls to SystemUI to preserve responsiveness.",
                         "On-Demand Architecture" to "SensorsOff operates through the Android Quick Settings Tile and Shizuku without a permanent background service."
                     )
 

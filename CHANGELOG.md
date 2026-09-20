@@ -8,42 +8,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [2.7.9] - 2026-09-20
 
-### Production Release: com.SensorsOff Application ID, Creator Attribution & IPC Robustness Hardening
+### Production Release: com.SensorsOff Application ID, Creator Attribution, Tri-State Verification & IPC Hardening
 
 #### Problem Analysis
+- **Authoritative Sensor State Verification**:
+  - The previous implementation relied on binary Booleans, which could treat failed queries, null values, or local SharedPreferences as valid confirmation of hardware sensor state.
+  - Verification could report SUCCESS if a query failed and fell back to a default boolean value.
 - **Package Identity & Attribution**:
-  - The application ID previously retained an ad-hoc template format (`com.aistudio.sensorsoff.pomujq`).
-  - Lacked official creator attribution to "zakeer-career" within resource metadata and UI display.
-- **IPC Robustness & Zero-Daemon Safety**:
-  - Required elimination of pipe buffer deadlocks in shell commands, centralization of AIDL transaction codes, mutual exclusion during sensor state updates, and authoritative read-back verification.
+  - Canonical package identity established as `com.SensorsOff`.
+  - Official creator attribution established as "zakeer-career" within resource metadata and UI display.
+- **IPC Robustness & On-Demand Lifecycle**:
+  - `BootCompletedReceiver` previously contained an automatic root start attempt for Shizuku; this was removed to keep the application strictly 100% on-demand.
+  - Process stdout/stderr/stdin streams in `runShizukuCommand` and `runRootCommand` are now cleanly closed in `finally` blocks.
 
 #### Root Cause
-- Transition from experimental prototyping to canonical production package ID (`com.SensorsOff`) and explicit developer identity attribution.
+- Binary boolean returns lacked expressiveness to represent unknown, failed, or unverified hardware sensor states.
+- Authoritative state verification required direct querying of the Android sensor privacy service via Binder / SPM reflection, strictly distinguishing `ENABLED`, `DISABLED`, and `UNKNOWN`.
 
 #### Code Changes
-1. **`app/build.gradle.kts`**:
-   - Updated `applicationId = "com.SensorsOff"`.
-   - Bumped `versionCode = 36`, `versionName = "2.7.9"`.
-   - Pruned unused dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck).
-2. **`app/src/main/res/values/strings.xml`**:
-   - Added string resource `<string name="creator_name">zakeer-career</string>`.
-3. **`app/src/main/java/com/example/MainActivity.kt`**:
-   - Added "Created by zakeer-career" badge in About header.
-   - Added "Creator" and "Application ID" to System Specifications info rows.
-4. **`app/src/main/java/com/example/ShizukuManager.kt`**:
-   - Structured `CommandResult` return data contract.
-   - Threaded stdout/stderr stream consumption to prevent buffer lockups.
-   - Introduced `stateOperationLock` (`ReentrantLock`) for concurrency safety.
-   - Implemented post-toggle authoritative read-back verification.
-   - Centralized Binder transaction codes and eliminated empty catch blocks.
-5. **`app/src/test/java/com/example/ExampleRobolectricTest.kt`**:
-   - Comprehensive Robolectric tests covering Shizuku failure scenarios, `CommandResult`, `SensorPrivacyCodes`, and multi-threaded concurrency.
+1. **`app/src/main/java/com/example/SensorPrivacyState.kt`**:
+   - Created `SensorPrivacyState` enum (`ENABLED`, `DISABLED`, `UNKNOWN`) with `matchesRequested(turnOff: Boolean)` and `isAuthoritative` helpers.
+   - Created `SensorToggleResult` sealed class (`Success`, `VerificationFailed`, `ExecutionFailed`, `Unavailable`).
+2. **`app/src/main/java/com/example/ShizukuManager.kt`**:
+   - Converted `queryDirectSensorPrivacy()`, `queryDirectToggleSensorPrivacy()`, `getSensorsOffState()`, and `getIndividualSensorState()` to return `SensorPrivacyState`.
+   - Guaranteed that `UNKNOWN` is never treated as `ENABLED` or `DISABLED`.
+   - Updated `setSensorsOffState`, `setIndividualSensorState`, and `setCamMicSensorState` to strictly verify against actual hardware reads before persisting to `SharedPreferences` or returning success.
+   - Added process stream closures in `finally` blocks for `runShizukuCommand` and `runRootCommand`.
+3. **`app/src/main/java/com/example/SensorsOffTileService.kt`**:
+   - Refactored `onStartListening` and toggle worker loop to consume `SensorPrivacyState` and prevent premature or unverified state flips.
+4. **`app/src/main/java/com/example/SensorViewModel.kt`**:
+   - Refactored `refreshState` and `contentObserver` to consume `SensorPrivacyState`.
+5. **`app/src/main/java/com/example/BootCompletedReceiver.kt`**:
+   - Removed automatic root start logic to adhere strictly to on-demand architecture.
+6. **`app/src/test/java/com/example/ExampleRobolectricTest.kt`**:
+   - Added unit tests for `SensorPrivacyState` state contracts, rejection of unverified/unknown states, and non-daemon boot receiver behavior.
 
 #### Telemetry & Verification
 - `compile_applet`: Build succeeded.
-- `gradle :app:testDebugUnitTest`: 31 actionable tasks passing (100% green).
-- Application ID verified: `com.SensorsOff`.
-- Creator verified: `zakeer-career`.
+- `ExampleRobolectricTest`: 100% tests passing.
+- Package ID: `com.SensorsOff`.
+- Creator: `zakeer-career`.
 
 ---
 
