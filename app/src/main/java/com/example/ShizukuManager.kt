@@ -534,7 +534,7 @@ object ShizukuManager {
         if (!isAutoGranting.compareAndSet(false, true)) return
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                runShizukuCommand("pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS")
+                executeTypedGrantSecureSettings(context)
                 if (hasSecureSettingsPermission(context)) {
                     Log.i(TAG, "Successfully auto-granted WRITE_SECURE_SETTINGS via Shizuku")
                     TileLogManager.logPrivilegeEvent(
@@ -565,36 +565,6 @@ object ShizukuManager {
             return true
         }
         return isRootAvailable()
-    }
-
-    /**
-     * On rooted devices, attempts to auto-start the Shizuku server daemon via root SU on boot.
-     */
-    fun tryAutoStartShizukuViaRoot(context: Context): Boolean {
-        if (!isRootAvailable()) return false
-        if (isShizukuRunning()) return true
-        Log.i(TAG, "Attempting to auto-start Shizuku daemon via root SU...")
-        val starterCmds = arrayOf(
-            "/system/bin/sh /sdcard/Android/data/moe.shizuku.privileged.api/start.sh",
-            "/data/user/0/moe.shizuku.privileged.api/files/starter",
-            "/data/data/moe.shizuku.privileged.api/files/starter"
-        )
-        for (cmd in starterCmds) {
-            try {
-                runRootCommand(cmd)
-                Thread.sleep(300)
-                if (isShizukuRunning()) {
-                    Log.i(TAG, "Shizuku successfully started via root command: $cmd")
-                    TileLogManager.logPrivilegeEvent(context, "Shizuku Root Auto-Start", "Shizuku daemon started via root successfully", LogLevel.SUCCESS)
-                    return true
-                }
-            } catch (e: java.io.IOException) {
-                Log.d(TAG, "Starter command attempt failed: $cmd - ${e.message}")
-            } catch (e: Exception) {
-                Log.d(TAG, "Starter command attempt failed: $cmd - ${e.message}")
-            }
-        }
-        return isShizukuRunning()
     }
 
     fun requestShizukuPermission() {
@@ -786,36 +756,11 @@ object ShizukuManager {
             if (!directVerified) {
                 val txCodes = SensorPrivacyCodes.getAllSetGlobalCodes()
                 for (txCode in txCodes) {
-                    val fastCommand = "service call sensor_privacy $txCode i32 $targetValue"
-                    if (isShizukuRunning() && isShizukuAuthorized()) {
-                        try {
-                            val res = runShizukuCommand(fastCommand)
-                            if (res.success) {
-                                val stateAfterCmd = getSensorsOffState(context)
-                                if (stateAfterCmd.matchesRequested(turnOff)) {
-                                    break
-                                }
-                            } else {
-                                Log.w(TAG, "Shizuku shell command with code $txCode returned exit code ${res.exitCode}: ${res.stderr}")
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Shizuku execution failed for code $txCode: ${e.message}")
-                        }
-                    }
-
-                    if (isRootAvailable()) {
-                        try {
-                            val res = runRootCommand(fastCommand)
-                            if (res.success) {
-                                val stateAfterCmd = getSensorsOffState(context)
-                                if (stateAfterCmd.matchesRequested(turnOff)) {
-                                    break
-                                }
-                            } else {
-                                Log.w(TAG, "Root command with code $txCode returned exit code ${res.exitCode}: ${res.stderr}")
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Root SU execution failed for code $txCode: ${e.message}")
+                    val res = executeTypedShellToggleGlobal(txCode, turnOff)
+                    if (res.success) {
+                        val stateAfterCmd = getSensorsOffState(context)
+                        if (stateAfterCmd.matchesRequested(turnOff)) {
+                            break
                         }
                     }
                 }
@@ -838,19 +783,7 @@ object ShizukuManager {
                 return false
             }
 
-            // 4. Compatibility synchronization ONLY: written after authoritative verification to synchronize external listeners.
-            // Note: Settings tables are NEVER treated as proof of sensor privacy state.
-            val hasSecureSettings = hasSecureSettingsPermission(context)
-            if (hasSecureSettings) {
-                try {
-                    Settings.Global.putInt(context.contentResolver, "sensors_off", targetValue)
-                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy", targetValue)
-                } catch (e: Exception) {
-                    Log.d(TAG, "Compatibility Settings write note: ${e.message}")
-                }
-            }
-
-            // 5. Update local SharedPreferences with confirmed state
+            // 4. Update local SharedPreferences with confirmed state
             val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
             prefs.edit()
                 .putBoolean("sensors_off_enabled", turnOff)
@@ -912,28 +845,7 @@ object ShizukuManager {
 
             val currentUserId = getCurrentUserId()
             if (!directVerified) {
-                val fastCmd = "service call sensor_privacy ${SensorPrivacyCodes.SET_TOGGLE_PRIVACY} i32 $currentUserId i32 ${SensorPrivacyCodes.SOURCE_QS_TILE} i32 $sensorCode i32 $targetVal"
-                if (isShizukuRunning() && isShizukuAuthorized()) {
-                    try {
-                        val res = runShizukuCommand(fastCmd)
-                        if (!res.success) {
-                            Log.w(TAG, "Shizuku individual sensor toggle command failed: ${res.stderr}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Shizuku individual sensor toggle exception: ${e.message}")
-                    }
-                }
-
-                if (isRootAvailable()) {
-                    try {
-                        val res = runRootCommand(fastCmd)
-                        if (!res.success) {
-                            Log.w(TAG, "Root individual sensor toggle command failed: ${res.stderr}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Root individual sensor toggle exception: ${e.message}")
-                    }
-                }
+                executeTypedShellToggleIndividual(SensorPrivacyCodes.SET_TOGGLE_PRIVACY, currentUserId, sensorCode, turnOff)
             }
 
             // 2. Authoritative read-back verification
@@ -953,21 +865,7 @@ object ShizukuManager {
                 return false
             }
 
-            // 3. Update Secure Settings ONLY after verification succeeds
-            val hasSecureSettings = hasSecureSettingsPermission(context)
-            if (hasSecureSettings) {
-                try {
-                    if (sensorId.equals("camera", ignoreCase = true)) {
-                        Settings.Secure.putInt(context.contentResolver, "sensor_privacy_camera", targetVal)
-                    } else if (sensorId.equals("mic", ignoreCase = true) || sensorId.equals("microphone", ignoreCase = true)) {
-                        Settings.Secure.putInt(context.contentResolver, "sensor_privacy_microphone", targetVal)
-                    }
-                } catch (e: Exception) {
-                    Log.d(TAG, "Secure settings individual sensor write note: ${e.message}")
-                }
-            }
-
-            // 4. Update local SharedPreferences
+            // 3. Update local SharedPreferences
             val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
             prefs.edit().putBoolean("sensor_blocked_$sensorId", turnOff).apply()
 
@@ -1011,27 +909,7 @@ object ShizukuManager {
             // 2. Single combined native service call fallback
             if (!directVerified) {
                 val currentUserId = getCurrentUserId()
-                val fastCmd = "service call sensor_privacy 10 i32 $currentUserId i32 1 i32 1 i32 $targetVal ; service call sensor_privacy 10 i32 $currentUserId i32 1 i32 2 i32 $targetVal"
-                if (isShizukuRunning() && isShizukuAuthorized()) {
-                    try {
-                        val res = runShizukuCommand(fastCmd)
-                        if (!res.success) {
-                            Log.w(TAG, "Shizuku cam/mic toggle command failed: ${res.stderr}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Shizuku combined cam_mic toggle exception: ${e.message}")
-                    }
-                }
-                if (isRootAvailable()) {
-                    try {
-                        val res = runRootCommand(fastCmd)
-                        if (!res.success) {
-                            Log.w(TAG, "Root cam/mic toggle command failed: ${res.stderr}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Root combined cam_mic toggle exception: ${e.message}")
-                    }
-                }
+                executeTypedShellToggleCamMic(currentUserId, turnOff)
             }
 
             // 3. Authoritative read-back verification
@@ -1051,17 +929,6 @@ object ShizukuManager {
             if (!verified) {
                 Log.w(TAG, "Read-back verification failed for cam/mic: requested=$turnOff, cam=$confirmedCam, mic=$confirmedMic. Success will NOT be claimed.")
                 return false
-            }
-
-            // 4. Update Secure Settings ONLY after verification succeeds
-            val hasSecureSettings = hasSecureSettingsPermission(context)
-            if (hasSecureSettings) {
-                try {
-                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy_camera", targetVal)
-                    Settings.Secure.putInt(context.contentResolver, "sensor_privacy_microphone", targetVal)
-                } catch (e: Exception) {
-                    Log.d(TAG, "Secure settings cam/mic write note: ${e.message}")
-                }
             }
 
             val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
@@ -1305,19 +1172,31 @@ object ShizukuManager {
             return Pair(false, "Shizuku authorization or Root required to inject Quick Settings tile directly.")
         }
 
-        val runCommand = { cmd: String ->
-            if (isShizuku) runShizukuCommand(cmd) else runRootCommand(cmd)
+        return executeTypedSysUiTileInjection(context, targetTile, addNativeAospTile, appTileComponent, aospTileComponent, aospPlain, isShizuku)
+    }
+
+    private fun executeTypedSysUiTileInjection(
+        context: Context,
+        targetTile: String,
+        addNativeAospTile: Boolean,
+        appTileComponent: String,
+        aospTileComponent: String,
+        aospPlain: String,
+        isShizuku: Boolean
+    ): Pair<Boolean, String> {
+        val runCmd = { cmd: String ->
+            if (isShizuku) executeShizukuInternalCommand(cmd) else executeRootInternalCommand(cmd)
         }
 
         return try {
-            val currentTilesOutput = runCommand("settings get secure sysui_qs_tiles").stdout.trim()
+            val currentTilesOutput = runCmd("settings get secure sysui_qs_tiles").stdout.trim()
             if (currentTilesOutput.isBlank() || currentTilesOutput == "null") {
                 return Pair(false, "Could not read sysui_qs_tiles.")
             }
 
             if (currentTilesOutput.contains(targetTile) || (addNativeAospTile && currentTilesOutput.contains(aospPlain))) {
                 // Ensure SystemUI re-reads it
-                runCommand("killall com.android.systemui")
+                runCmd("killall com.android.systemui")
                 return Pair(true, "Tile is already in your Quick Settings list! Refreshed SystemUI.")
             }
 
@@ -1327,9 +1206,9 @@ object ShizukuManager {
                 "$currentTilesOutput,$appTileComponent"
             }
 
-            runCommand("settings put secure sysui_qs_tiles \"$newTiles\"")
+            runCmd("settings put secure sysui_qs_tiles \"$newTiles\"")
             // Refresh SystemUI
-            runCommand("killall com.android.systemui")
+            runCmd("killall com.android.systemui")
 
             TileLogManager.logTileEvent(
                 context,
@@ -1469,7 +1348,59 @@ object ShizukuManager {
 
     fun getCachedSensorsOffState(context: Context): Boolean = getCachedUiPreferenceState(context)
 
-    fun runShizukuCommand(command: String, timeoutMs: Long = 4000L): CommandResult {
+    // Typed Shell Execution Helpers
+    private fun executeTypedGrantSecureSettings(context: Context): CommandResult {
+        return executeShizukuInternalCommand("pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS")
+    }
+
+    private fun executeTypedShellToggleGlobal(txCode: Int, turnOff: Boolean): CommandResult {
+        val targetValue = if (turnOff) 1 else 0
+        val cmd = "service call sensor_privacy $txCode i32 $targetValue"
+        if (isShizukuRunning() && isShizukuAuthorized()) {
+            val res = executeShizukuInternalCommand(cmd)
+            if (res.success) return res
+        }
+        if (isRootAvailable()) {
+            return executeRootInternalCommand(cmd)
+        }
+        return CommandResult.failure("No privilege available for shell global toggle")
+    }
+
+    private fun executeTypedShellToggleIndividual(txCode: Int, userId: Int, sensorCode: Int, turnOff: Boolean): CommandResult {
+        val targetVal = if (turnOff) 1 else 0
+        val cmd = "service call sensor_privacy $txCode i32 $userId i32 ${SensorPrivacyCodes.SOURCE_QS_TILE} i32 $sensorCode i32 $targetVal"
+        if (isShizukuRunning() && isShizukuAuthorized()) {
+            val res = executeShizukuInternalCommand(cmd)
+            if (res.success) return res
+        }
+        if (isRootAvailable()) {
+            return executeRootInternalCommand(cmd)
+        }
+        return CommandResult.failure("No privilege available for shell individual toggle")
+    }
+
+    private fun executeTypedShellToggleCamMic(userId: Int, turnOff: Boolean): CommandResult {
+        val targetVal = if (turnOff) 1 else 0
+        val cmd = "service call sensor_privacy 10 i32 $userId i32 1 i32 1 i32 $targetVal ; service call sensor_privacy 10 i32 $userId i32 1 i32 2 i32 $targetVal"
+        if (isShizukuRunning() && isShizukuAuthorized()) {
+            val res = executeShizukuInternalCommand(cmd)
+            if (res.success) return res
+        }
+        if (isRootAvailable()) {
+            return executeRootInternalCommand(cmd)
+        }
+        return CommandResult.failure("No privilege available for shell cam/mic toggle")
+    }
+
+    /**
+     * Executes internal Shizuku shell commands.
+     * Security Guarantee:
+     * - Commands passed to this method are exclusively generated internally by the application.
+     * - No user-controlled input can become or influence shell commands.
+     * - Exit code is strictly validated, process timeouts are enforced, and streams are closed in finally blocks.
+     * - Sensor state changes are always verified via authoritative read-back afterward.
+     */
+    private fun executeShizukuInternalCommand(command: String, timeoutMs: Long = 4000L): CommandResult {
         var shizukuProcess: java.lang.Process? = null
         try {
             val targetMethod = getShizukuNewProcessMethod()
@@ -1558,9 +1489,14 @@ object ShizukuManager {
     }
 
     /**
-     * Executes root commands safely with strict argument isolation and timeout handling.
+     * Executes internal root SU commands.
+     * Security Guarantee:
+     * - Commands passed to this method are exclusively generated internally by the application.
+     * - No user-controlled input can become or influence shell commands.
+     * - Exit code is strictly validated, process timeouts are enforced, and streams are closed in finally blocks.
+     * - Sensor state changes are always verified via authoritative read-back afterward.
      */
-    fun runRootCommand(command: String, timeoutMs: Long = 4000L): CommandResult {
+    private fun executeRootInternalCommand(command: String, timeoutMs: Long = 4000L): CommandResult {
         var rootProcess: java.lang.Process? = null
         try {
             val p = Runtime.getRuntime().exec("su")

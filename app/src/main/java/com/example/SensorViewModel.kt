@@ -459,15 +459,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
     fun launchShizukuApp() {
         val context = getApplication<Application>().applicationContext
         try {
-            if (ShizukuManager.isRootAvailable()) {
-                viewModelScope.launch(Dispatchers.IO) {
-                    val started = ShizukuManager.tryAutoStartShizukuViaRoot(context)
-                    if (started) {
-                        delay(500)
-                        refreshState()
-                    }
-                }
-            }
             val launchIntent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
             if (launchIntent != null) {
                 launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)

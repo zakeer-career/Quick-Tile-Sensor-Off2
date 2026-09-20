@@ -115,27 +115,33 @@ class SensorsOffTileService : TileService() {
 
                 val elapsedMs = System.currentTimeMillis() - executionStartTime
 
+                val confirmedState = if (cachedBlockMode == "cam_mic") {
+                    ShizukuManager.getCamMicCombinedState(applicationContext)
+                } else {
+                    ShizukuManager.getSensorsOffState(applicationContext)
+                }
+
+                val confirmedStateString = when (confirmedState) {
+                    SensorPrivacyState.ENABLED -> "STATE_ACTIVE"
+                    SensorPrivacyState.DISABLED -> "STATE_INACTIVE"
+                    SensorPrivacyState.UNKNOWN -> "STATE_UNAVAILABLE"
+                }
+
                 TileLogManager.logTileEvent(
                     applicationContext,
                     if (success) "Tile Toggle Completed" else "Tile Toggle Verification Warning",
-                    "Target: $target | Confirmed Success: $success | Elapsed: ${elapsedMs}ms | Total: ${System.currentTimeMillis() - clickTime}ms",
+                    "Target: $target | Confirmed: $confirmedStateString | Success: $success | Elapsed: ${elapsedMs}ms | Total: ${System.currentTimeMillis() - clickTime}ms",
                     if (success) LogLevel.SUCCESS else LogLevel.WARN,
                     executionMs = elapsedMs
                 )
 
                 TileLogManager.updateTileDiagnostics(
                     applicationContext,
-                    lastState = if (target) "STATE_ACTIVE" else "STATE_INACTIVE",
-                    lastAction = "Toggle to ${if (target) "ON" else "OFF"}",
+                    lastState = confirmedStateString,
+                    lastAction = "Toggle to ${if (target) "ON" else "OFF"} (Result: $confirmedStateString)",
                     lastLatencyMs = elapsedMs,
                     blockMode = cachedBlockMode
                 )
-
-                val confirmedState = if (cachedBlockMode == "cam_mic") {
-                    ShizukuManager.getCamMicCombinedState(applicationContext)
-                } else {
-                    ShizukuManager.getSensorsOffState(applicationContext)
-                }
 
                 withContext(Dispatchers.Main) {
                     pendingTargetState = null
@@ -218,7 +224,7 @@ class SensorsOffTileService : TileService() {
             return
         }
 
-        // 1. Instant refresh from system settings / in-memory cache
+        // 1. Immediate UI refresh from cached state
         refreshTileImmediately()
 
         // 2. Fast asynchronous query to keep tile in sync

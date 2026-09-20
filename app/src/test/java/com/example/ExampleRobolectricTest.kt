@@ -72,16 +72,12 @@ class ExampleRobolectricTest {
 
   @Test
   fun `test shizuku unavailable does not throw unhandled exception`() {
-    val context = ApplicationProvider.getApplicationContext<Context>()
     val isRunning = ShizukuManager.isShizukuRunning()
     val isAuth = ShizukuManager.isShizukuAuthorized()
     org.junit.Assert.assertFalse(isRunning && isAuth)
 
     val validInterface = ShizukuManager.validateSensorPrivacyInterface()
     org.junit.Assert.assertFalse(validInterface)
-
-    val cmdRes = ShizukuManager.runShizukuCommand("echo test")
-    org.junit.Assert.assertFalse(cmdRes.success)
   }
 
   @Test
@@ -231,6 +227,83 @@ class ExampleRobolectricTest {
     val cameraState = ShizukuManager.getIndividualSensorState(context, "camera")
     // Should never falsely report ENABLED in unprivileged test environment
     org.junit.Assert.assertNotEquals(SensorPrivacyState.ENABLED, cameraState)
+  }
+
+  @Test
+  fun `test operation accepted but state mismatch rejects verification`() {
+    // Scenario: Binder returns TRANSACTION_ACCEPTED, but actual state read returns DISABLED when requested turnOff = true
+    val binderResult = BinderTransactionResult.TRANSACTION_ACCEPTED
+    assertTrue(binderResult.isAccepted)
+
+    val requestedTurnOff = true
+    val actualState = SensorPrivacyState.DISABLED
+
+    // State verification MUST fail
+    val verified = actualState.matchesRequested(requestedTurnOff)
+    org.junit.Assert.assertFalse("Mismatched state must not pass verification", verified)
+
+    val toggleResult: SensorToggleResult = if (verified) {
+      SensorToggleResult.Success(confirmedState = actualState, latencyMs = 12L)
+    } else {
+      SensorToggleResult.Failure(
+        reason = "State mismatch after IPC",
+        confirmedState = actualState,
+        latencyMs = 12L
+      )
+    }
+    assertTrue(toggleResult is SensorToggleResult.Failure)
+    org.junit.Assert.assertFalse(toggleResult.isSuccess)
+  }
+
+  @Test
+  fun `test operation accepted but state UNKNOWN rejects verification`() {
+    // Scenario: IPC call executed, but sensor query fails with UNKNOWN
+    val actualState = SensorPrivacyState.UNKNOWN
+    org.junit.Assert.assertFalse(actualState.isAuthoritative)
+    assertEquals(null, actualState.toBooleanOrNull())
+
+    // Both requestedSensorsOff = true and false MUST fail verification when state is UNKNOWN
+    org.junit.Assert.assertFalse(actualState.matchesRequested(requestedSensorsOff = true))
+    org.junit.Assert.assertFalse(actualState.matchesRequested(requestedSensorsOff = false))
+
+    val toggleResult: SensorToggleResult = SensorToggleResult.Failure(
+      reason = "Authoritative sensor state could not be read",
+      confirmedState = actualState,
+      latencyMs = 15L
+    )
+    org.junit.Assert.assertFalse(toggleResult.isSuccess)
+    assertEquals(actualState, (toggleResult as SensorToggleResult.Failure).confirmedState)
+  }
+
+  @Test
+  fun `test successful operation and verification contract`() {
+    // Scenario: Operation requested turnOff = true, actual confirmed state is ENABLED
+    val requestedTurnOff = true
+    val confirmedState = SensorPrivacyState.ENABLED
+
+    assertTrue(confirmedState.isAuthoritative)
+    assertEquals(true, confirmedState.toBooleanOrNull())
+    assertTrue(confirmedState.matchesRequested(requestedTurnOff))
+
+    val toggleResult: SensorToggleResult = SensorToggleResult.Success(
+      confirmedState = confirmedState,
+      latencyMs = 8L
+    )
+    assertTrue(toggleResult.isSuccess)
+    assertEquals(confirmedState, (toggleResult as SensorToggleResult.Success).confirmedState)
+  }
+
+  @Test
+  fun `test rapid repeated state checks execute safely without deadlock`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    for (i in 1..25) {
+      val state = ShizukuManager.getSensorsOffState(context)
+      assertNotNull(state)
+      val camState = ShizukuManager.getIndividualSensorState(context, "camera")
+      assertNotNull(camState)
+      val micState = ShizukuManager.getIndividualSensorState(context, "mic")
+      assertNotNull(micState)
+    }
   }
 }
 

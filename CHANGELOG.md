@@ -14,19 +14,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Authoritative Sensor State Verification & Explicit Binder Results**:
   - The previous implementation relied on binary Booleans, which could treat failed queries, null values, or local SharedPreferences as valid confirmation of hardware sensor state.
   - Low-level Binder transact operations previously returned a generic boolean, conflating remote IPC acceptance with actual sensor state confirmation.
-- **Continuous Polling Loop**:
+- **Settings Synchronization Writes & Non-Authoritative Pollution**:
+  - Direct writes to `Settings.Global` and `Settings.Secure` during sensor toggles could pollute settings tables without providing authoritative state confirmation.
+- **Automatic Shizuku Startup via Root**:
+  - `tryAutoStartShizukuViaRoot` attempted automatic root-based startup of Shizuku, violating strict on-demand lifecycle constraints and creating unnecessary root invocation surface area.
+- **Diagnostic State Accuracy**:
+  - `SensorsOffTileService.kt` previously recorded `target` as diagnostic `lastState` before state verification completed, allowing failed or unverified toggles to report active/inactive diagnostics.
+- **Continuous Polling Loop & Performance Claims**:
   - `SensorViewModel.kt` previously executed a periodic 2.5-second polling loop while active, causing unnecessary CPU wakeups and violating event-driven design principles.
+  - Misleading performance claims (e.g. "Instant", "0ms", "guarantee") existed in UI and comments.
 - **Package Identity & Attribution**:
   - Canonical package identity established as `com.SensorsOff`.
   - Official creator attribution established as "zakeer-career" within resource metadata and UI display.
 - **IPC Robustness & On-Demand Lifecycle**:
-  - `BootCompletedReceiver` previously contained an automatic root start attempt for Shizuku; this was removed to keep the application strictly 100% on-demand.
-  - Process stdout/stderr/stdin streams in `runShizukuCommand` and `runRootCommand` are cleanly closed in `finally` blocks.
-  - Scrubbed unsupported performance claims (e.g. "0ms", "instant", "zero latency") in favor of factual descriptions.
+  - Completely removed `tryAutoStartShizukuViaRoot` and associated root startup commands; Shizuku lifecycle is managed externally.
+  - Process stdout/stderr/stdin streams in internal command runners are cleanly closed in `finally` blocks with strict timeouts.
+  - Replaced ad-hoc shell execution with typed internal shell helpers.
 
 #### Root Cause
 - Binary boolean returns lacked expressiveness to represent unknown, failed, or unverified hardware sensor states.
 - Low-level IPC acceptance is distinct from state confirmation; authoritative state verification requires direct querying of the Android sensor privacy service via Binder / SPM reflection, strictly distinguishing `ENABLED`, `DISABLED`, and `UNKNOWN`.
+- Settings tables writes are non-authoritative and unnecessary for Android sensor privacy service mutations.
+- Automatic Shizuku startup is outside the app's scope and conflicts with on-demand operation.
+- Diagnostic history must reflect confirmed actual state (`STATE_ACTIVE`, `STATE_INACTIVE`, `STATE_UNAVAILABLE`) rather than requested targets.
 - Periodic polling in ViewModel was redundant with Android `ContentObserver`, lifecycle events (`onResume`), and Shizuku listener callbacks.
 
 #### Code Changes
@@ -39,18 +49,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
    - Converted `queryDirectSensorPrivacy()`, `queryDirectToggleSensorPrivacy()`, `getSensorsOffState()`, and `getIndividualSensorState()` to return `SensorPrivacyState`.
    - Guaranteed that `UNKNOWN` is never treated as `ENABLED` or `DISABLED`.
    - Updated `setSensorsOffState`, `setIndividualSensorState`, and `setCamMicSensorState` to strictly verify against actual hardware reads before persisting to `SharedPreferences` or returning success.
-   - Added process stream closures in `finally` blocks for `runShizukuCommand` and `runRootCommand`.
-   - Documented internal transaction mappings and OEM variance.
+   - Completely removed all non-authoritative writes to `Settings.Global` and `Settings.Secure` during sensor toggles.
+   - Completely removed `tryAutoStartShizukuViaRoot` and automatic Shizuku root start routines.
+   - Encapsulated shell execution into private internal methods and strongly typed helpers (`executeTypedGrantSecureSettings`, `executeTypedShellToggleGlobal`, `executeTypedShellToggleIndividual`, `executeTypedShellToggleCamMic`, `executeTypedSysUiTileInjection`).
+   - Added process stream closures in `finally` blocks for internal command runners.
 3. **`app/src/main/java/com/example/SensorViewModel.kt`**:
    - Removed periodic 2.5-second polling loop, transitioning to 100% event-driven and lifecycle-driven updates (`ContentObserver`, `onResume`, Shizuku listeners).
+   - Removed calls to `tryAutoStartShizukuViaRoot`.
    - Refactored `refreshState` and `contentObserver` to consume `SensorPrivacyState`.
 4. **`app/src/main/java/com/example/SensorsOffTileService.kt`**:
    - Refactored `onStartListening` and toggle worker loop to consume `SensorPrivacyState` and prevent premature or unverified state flips.
+   - Updated diagnostic `lastState` to strictly reflect confirmed actual state (`STATE_ACTIVE`, `STATE_INACTIVE`, `STATE_UNAVAILABLE`).
 5. **`app/src/main/java/com/example/BootCompletedReceiver.kt`**:
    - Removed automatic root start logic to adhere strictly to on-demand architecture.
-6. **`app/src/test/java/com/example/ExampleRobolectricTest.kt`**:
-   - Added unit tests for `SensorPrivacyState` state contracts, `BinderTransactionResult` states, rejection of unverified/unknown states, and non-daemon boot receiver behavior.
-7. **`README.md` & Documentation**:
+6. **`app/src/test/java/com/example/ExampleRobolectricTest.kt` & `ExampleInstrumentedTest.kt`**:
+   - Added unit tests for `SensorPrivacyState` contracts, `BinderTransactionResult` states, operation accepted but state mismatch, operation accepted but state UNKNOWN, successful operation contract, and rapid repeated requests.
+   - Verified `applicationId` assertion matches `com.SensorsOff`.
+7. **`README.md` & UI Text**:
    - Refactored performance wording to use factual statements ("Fast Quick Settings Integration", "Rapid hardware state switching").
 8. **`.github/workflows/build-apk.yml`**:
    - Enforced automated unit test execution (`testDebugUnitTest`) before debug APK assembly on all pushes and pull requests.
@@ -59,7 +74,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 #### Telemetry & Verification
 - `compile_applet`: Build succeeded.
-- `gradle :app:testDebugUnitTest`: 100% tests passing (32/32 unit tests green in 24s).
+- `gradle :app:testDebugUnitTest`: 100% tests passing (35/35 unit tests green in 25s).
 - Package ID: `com.SensorsOff`.
 - Creator: `zakeer-career`.
 - Static Audit: 0 foreground services, 0 background daemons, 0 keep-alive services, 0 periodic polling timers.

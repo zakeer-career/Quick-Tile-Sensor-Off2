@@ -2320,7 +2320,7 @@ fun SleekAboutTabContent(
             ) {
                 Column(modifier = Modifier.padding(20.dp)) {
                     Text(
-                        text = "SECURITY & ISOLATION GUARANTEE",
+                        text = "SECURITY & PRIVACY ARCHITECTURE",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         color = colors.accentGreen,
@@ -2556,7 +2556,7 @@ fun SleekRebootOptimizationCard(
                         letterSpacing = 1.2.sp
                     )
                     Text(
-                        text = if (hasSecureSettings) "Permanent Instant Boot Active" else "Optimize startup response after reboot",
+                        text = if (hasSecureSettings) "Secure Settings Mode Active" else "Optimize startup response after reboot",
                         fontSize = 11.sp,
                         color = colors.textSecondary
                     )
@@ -2574,7 +2574,7 @@ fun SleekRebootOptimizationCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Option 1: Instant Boot Mode via ADB (Permanent on boot)
+            // Option 1: Secure Settings Direct Mode via ADB
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2599,7 +2599,7 @@ fun SleekRebootOptimizationCard(
                             modifier = Modifier.size(16.dp)
                         )
                         Text(
-                            text = if (hasSecureSettings) "INSTANT BOOT MODE (ACTIVE)" else "RECOMMENDED: INSTANT BOOT (PERMANENT)",
+                            text = if (hasSecureSettings) "SECURE SETTINGS MODE (ACTIVE)" else "RECOMMENDED: DIRECT ACCESS (PERMANENT)",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (hasSecureSettings) colors.accentGreen else colors.accentCyan,

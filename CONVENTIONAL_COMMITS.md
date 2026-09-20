@@ -20,13 +20,15 @@ Problem:
 1. Binary boolean returns in sensor state verification could treat failed queries, null values, or local SharedPreferences as valid confirmation of hardware sensor state.
 2. Low-level Binder transact operations returned generic booleans, conflating IPC acceptance with confirmed hardware state changes.
 3. Periodic 2.5-second polling loop in SensorViewModel caused redundant background execution.
-4. Automatic root start logic in BootCompletedReceiver violated on-demand constraints.
-5. Application ID required canonical com.SensorsOff identity and creator attribution to zakeer-career.
+4. Automatic root start logic for Shizuku violated on-demand constraints and root minimization.
+5. Direct Settings.Global / Settings.Secure writes during sensor toggles polluted tables without providing authoritative state confirmation.
+6. Application ID required canonical com.SensorsOff identity and creator attribution to zakeer-career.
 
 Root Cause:
 1. Binary booleans conflate FALSE with UNKNOWN, allowing false positives on unverified states.
 2. SharedPreferences was improperly used as a fallback source of truth during hardware toggle verification.
 3. IPC acceptance from Binder.transact() does not prove the remote sensor_privacy service mutated HAL state.
+4. Settings tables are non-authoritative for Android sensor privacy service state.
 
 Changes:
 - SensorPrivacyState.kt:
@@ -38,21 +40,25 @@ Changes:
   * Converted queryDirectSensorPrivacy(), queryDirectToggleSensorPrivacy(), getSensorsOffState(), and getIndividualSensorState() to return SensorPrivacyState.
   * Guaranteed UNKNOWN is never treated as ENABLED or DISABLED.
   * Implemented post-toggle authoritative read-back verification against system service before persisting state.
-  * Added process stream closures in finally blocks for runShizukuCommand and runRootCommand.
-  * Documented internal transaction mappings and OEM variance.
+  * Removed tryAutoStartShizukuViaRoot and root startup routines completely.
+  * Removed all Settings.Global and Settings.Secure writes during sensor state toggles.
+  * Encapsulated internal shell execution into typed helpers and private runners with stream closures and timeouts.
 - SensorViewModel.kt:
   * Removed periodic 2.5-second polling loop, transitioning to 100% event-driven and lifecycle-driven updates (ContentObserver, onResume, Shizuku listeners).
+  * Removed tryAutoStartShizukuViaRoot calls.
   * Refactored refreshState and contentObserver to consume SensorPrivacyState.
 - SensorsOffTileService.kt:
   * Refactored onStartListening and toggle worker loop to consume SensorPrivacyState.
+  * Updated diagnostic lastState to strictly record confirmed actual state (STATE_ACTIVE, STATE_INACTIVE, STATE_UNAVAILABLE).
 - BootCompletedReceiver.kt:
   * Removed automatic root start logic to ensure 100% on-demand execution.
 - README.md:
   * Refactored performance claims to use factual terminology ("Fast Quick Settings Integration", "Rapid hardware state switching").
 - app/build.gradle.kts:
   * Configured applicationId = "com.SensorsOff", versionCode = 36, versionName = "2.7.9".
-- ExampleRobolectricTest.kt:
-  * Added comprehensive unit tests for SensorPrivacyState, BinderTransactionResult, UNKNOWN state handling, verification rejection, and boot receiver.
+- ExampleRobolectricTest.kt & ExampleInstrumentedTest.kt:
+  * Added comprehensive unit tests for SensorPrivacyState, BinderTransactionResult, UNKNOWN state handling, operation accepted but state mismatch, operation accepted but state UNKNOWN, successful operation contract, and rapid repeated requests.
+  * Updated test package assertions to com.SensorsOff.
 - .github/workflows/build-apk.yml:
   * Added automated unit test validation step before APK assembly on all pushes and pull requests.
   * Configured GitHub Release automation to attach versioned debug APKs (SensorsOff-v2.7.9-debug.apk) directly synchronized with repository source code.
@@ -60,7 +66,7 @@ Changes:
 
 Verification:
 - compile_applet: Build succeeded.
-- gradle :app:testDebugUnitTest: 100% passing (32/32 unit tests green in 24s).
+- gradle :app:testDebugUnitTest: 100% passing (35/35 unit tests green in 25s).
 - Package name verified: com.SensorsOff.
 - Creator verified: zakeer-career.
 - Static audit: 0 foreground services, 0 background daemons, 0 keep-alive services, 0 periodic polling timers.

@@ -50,6 +50,10 @@ This document serves as the canonical technical post-mortem and engineering anal
   - A query failure, exception, or uninitialized cache could return `false` or fall back to local `SharedPreferences` / `Settings` values, treating them as verified truth.
   - Verification could mistakenly report SUCCESS when the actual system service state could not be read or confirmed.
   - Low-level Binder `transact()` returns only indicated kernel/remote IPC dispatch, not that the hardware sensor state actually changed.
+- **Settings Synchronization Writes & Table Mutation**:
+  - Direct writes to `Settings.Global` and `Settings.Secure` during sensor toggles polluted system tables without providing authoritative state confirmation.
+- **Automatic Shizuku Startup via Root**:
+  - `tryAutoStartShizukuViaRoot` attempted automatic root-based startup of Shizuku, violating strict on-demand lifecycle constraints and creating unnecessary root invocation surface area.
 - **Continuous Polling Loop**:
   - `SensorViewModel.kt` executed a periodic 2.5-second polling loop, causing unnecessary CPU wakeups and violating event-driven design principles.
 - **On-Demand Lifecycle & Boot Cleanliness**:
@@ -61,6 +65,8 @@ This document serves as the canonical technical post-mortem and engineering anal
 #### Root Cause
 - Binary booleans conflate FALSE (sensors available) with UNKNOWN (query failed or unverified).
 - Fallback layers (SharedPreferences, Settings tables) are not authoritative hardware truth; only the Android sensor privacy service via Binder transact or SensorPrivacyManager reflection constitutes authoritative truth.
+- Settings tables writes are non-authoritative and unnecessary for mutating or reading sensor privacy state.
+- Automatic Shizuku startup is outside the app's scope and conflicts with on-demand operation.
 - Periodic polling in ViewModel was redundant with Android `ContentObserver`, lifecycle events (`onResume`), and Shizuku listener callbacks.
 
 #### Engineered Resolution & Impact
@@ -73,21 +79,26 @@ This document serves as the canonical technical post-mortem and engineering anal
    - Clarified that transaction codes are internal Android sensor privacy service mappings and may vary by OEM/version.
 3. **Periodic Polling Loop Elimination**:
    - Removed the 2.5-second polling loop in `SensorViewModel.kt`, transitioning to 100% event-driven (`ContentObserver`, Shizuku listener callbacks) and lifecycle-driven (`onResume`) updates.
-4. **Authoritative Post-Toggle Verification**:
+4. **Purge of Settings Writes & Elimination of Root Auto-Start**:
+   - Completely removed all direct writes to `Settings.Global` and `Settings.Secure` during sensor toggles; the Android sensor privacy service is the sole source of truth.
+   - Completely removed `tryAutoStartShizukuViaRoot` from `ShizukuManager.kt` and `SensorViewModel.kt`.
+5. **Authoritative Post-Toggle Verification & Diagnostic State Accuracy**:
    - `setSensorsOffState`, `setIndividualSensorState`, and `setCamMicSensorState` strictly query actual hardware sensor state from the system service after IPC execution.
    - Only upon confirmed verification is local persistence (`SharedPreferences`) updated and success reported.
-5. **Stream Resource Management**:
-   - `runShizukuCommand` and `runRootCommand` explicitly close input, output, and error streams within `finally` blocks.
-6. **On-Demand Boot Receiver**:
+   - `SensorsOffTileService.kt` strictly records confirmed actual state (`STATE_ACTIVE`, `STATE_INACTIVE`, `STATE_UNAVAILABLE`) in diagnostic `lastState` rather than optimistic target requests.
+6. **Stream Resource Management & Typed Command Encapsulation**:
+   - Encapsulated shell command execution into strongly typed internal helpers (`executeTypedGrantSecureSettings`, `executeTypedShellToggleGlobal`, `executeTypedShellToggleIndividual`, `executeTypedShellToggleCamMic`, `executeTypedSysUiTileInjection`).
+   - Internal command runners are private, enforce process timeouts, and explicitly close input, output, and error streams within `finally` blocks.
+7. **On-Demand Boot Receiver**:
    - Removed automatic root start from `BootCompletedReceiver` to maintain zero-daemon, 100% on-demand architecture.
-7. **Canonical Package ID & Attribution**:
+8. **Canonical Package ID & Attribution**:
    - Configured `applicationId = "com.SensorsOff"`, `versionCode = 36`, `versionName = "2.7.9"`, and credited creator "zakeer-career".
-8. **Continuous Integration & Release APK Synchronization**:
+9. **Continuous Integration & Release APK Synchronization**:
    - Updated GitHub Actions workflow (`build-apk.yml`) to execute `gradle :app:testDebugUnitTest` on every push/PR before assembling release APKs.
    - Configured automated release publishing to build and package version-tagged debug APK artifacts directly matching repository commits.
    - Configured workflow artifact upload for complete source code archives (`SensorsOff-Source-Code`) in addition to compiled APKs.
-9. **Robolectric Target SDK Alignment**:
-   - Configured Robolectric tests (`ExampleRobolectricTest`, `GreetingScreenshotTest`, and `robolectric.properties`) to use `sdk = [34]` (Android 14) to prevent `DefaultSdkProvider` unsupported SDK 36 exceptions in CI runners while maintaining runtime `compileSdk 36`.
+10. **Robolectric Target SDK Alignment**:
+    - Configured Robolectric tests (`ExampleRobolectricTest`, `GreetingScreenshotTest`, and `robolectric.properties`) to use `sdk = [34]` (Android 14) to prevent `DefaultSdkProvider` unsupported SDK 36 exceptions in CI runners while maintaining runtime `compileSdk 36`.
 
 ---
 
