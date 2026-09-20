@@ -6,6 +6,47 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.7.9] - 2026-09-20
+
+### Production Release: com.SensorsOff Application ID, Creator Attribution & IPC Robustness Hardening
+
+#### Problem Analysis
+- **Package Identity & Attribution**:
+  - The application ID previously retained an ad-hoc template format (`com.aistudio.sensorsoff.pomujq`).
+  - Lacked official creator attribution to "zakeer-career" within resource metadata and UI display.
+- **IPC Robustness & Zero-Daemon Safety**:
+  - Required elimination of pipe buffer deadlocks in shell commands, centralization of AIDL transaction codes, mutual exclusion during sensor state updates, and authoritative read-back verification.
+
+#### Root Cause
+- Transition from experimental prototyping to canonical production package ID (`com.SensorsOff`) and explicit developer identity attribution.
+
+#### Code Changes
+1. **`app/build.gradle.kts`**:
+   - Updated `applicationId = "com.SensorsOff"`.
+   - Bumped `versionCode = 36`, `versionName = "2.7.9"`.
+   - Pruned unused dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck).
+2. **`app/src/main/res/values/strings.xml`**:
+   - Added string resource `<string name="creator_name">zakeer-career</string>`.
+3. **`app/src/main/java/com/example/MainActivity.kt`**:
+   - Added "Created by zakeer-career" badge in About header.
+   - Added "Creator" and "Application ID" to System Specifications info rows.
+4. **`app/src/main/java/com/example/ShizukuManager.kt`**:
+   - Structured `CommandResult` return data contract.
+   - Threaded stdout/stderr stream consumption to prevent buffer lockups.
+   - Introduced `stateOperationLock` (`ReentrantLock`) for concurrency safety.
+   - Implemented post-toggle authoritative read-back verification.
+   - Centralized Binder transaction codes and eliminated empty catch blocks.
+5. **`app/src/test/java/com/example/ExampleRobolectricTest.kt`**:
+   - Comprehensive Robolectric tests covering Shizuku failure scenarios, `CommandResult`, `SensorPrivacyCodes`, and multi-threaded concurrency.
+
+#### Telemetry & Verification
+- `compile_applet`: Build succeeded.
+- `gradle :app:testDebugUnitTest`: 31 actionable tasks passing (100% green).
+- Application ID verified: `com.SensorsOff`.
+- Creator verified: `zakeer-career`.
+
+---
+
 ## [2.7.8] - 2026-09-20
 
 ### Production-Hardening Pass: Sensor Privacy IPC Robustness, Shell Process Hardening, Authoritative State Sync & Zero-Daemon Safety

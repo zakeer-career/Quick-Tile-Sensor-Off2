@@ -11,6 +11,33 @@ Each commit entry includes:
 
 ---
 
+### [v2.7.9] - 2026-09-20
+
+```git
+release(v2.7.9): update applicationId to com.SensorsOff and attribute creator zakeer-career
+
+Problem:
+1. Application ID used temporary format com.aistudio.sensorsoff.pomujq instead of canonical com.SensorsOff.
+2. Missing creator attribution to zakeer-career in UI and string resources.
+3. Versioning needed to increment to reflect the completed production hardening and identity updates.
+
+Root Cause:
+Standard release lifecycle bump following production hardening and package rebranding.
+
+Changes:
+- app/build.gradle.kts: Updated applicationId to com.SensorsOff, bumped versionCode to 36, versionName to 2.7.9.
+- app/src/main/res/values/strings.xml: Added creator_name string resource "zakeer-career".
+- app/src/main/java/com/example/MainActivity.kt: Added "Created by zakeer-career" visual badge and system info row.
+- CHANGELOG.md & PROBLEM_ANALYSIS_ROOT_CAUSE.md: Documented v2.7.9 release specifications.
+
+Verification:
+- compile_applet: Build succeeded.
+- gradle :app:testDebugUnitTest: 31/31 unit tests green.
+- Package name verified: com.SensorsOff.
+```
+
+---
+
 ### [v2.7.8] - 2026-09-20
 
 ```git

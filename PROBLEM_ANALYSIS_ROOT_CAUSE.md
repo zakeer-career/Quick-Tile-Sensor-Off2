@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.7.9 - Production Release: com.SensorsOff Application ID & Creator Attribution](#v279---production-release-comsensorsoff-application-id--creator-attribution)
 - [v2.7.8 - Removal of POST_NOTIFICATIONS Permission & Alignment of On-Demand Changelog Copy](#v278---removal-of-post_notifications-permission--alignment-of-on-demand-changelog-copy)
 - [v2.7.7 - Purge of Obsolete Keep-Alive UI and Preferences for Pure On-Demand Operation](#v277---purge-of-obsolete-keep-alive-ui-and-preferences-for-pure-on-demand-operation)
 - [v2.7.6 - Complete Removal of Foreground Keep-Alive Service & Adoption of Pure On-Demand Architecture](#v276---complete-removal-of-foreground-keep-alive-service--adoption-of-pure-on-demand-architecture)
@@ -38,6 +39,28 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.7.9] - Production Release: com.SensorsOff Application ID & Creator Attribution
+
+#### Problem Analysis
+- **Placeholder Application ID & Creator Visibility**:
+  - The application used a temporary identifier (`com.aistudio.sensorsoff.pomujq`) instead of the canonical `com.SensorsOff`.
+  - The creator "zakeer-career" was not credited in the UI or resource metadata.
+- **Production Versioning**:
+  - Version incremented to 2.7.9 (versionCode 36) to consolidate the completed production hardening, shell stream safety, and re-branding.
+
+#### Root Cause
+- Final productionization milestone completing the transition from experimental testing to a branded, author-attributed release.
+
+#### Engineered Resolution & Impact
+1. **Package ID Update**:
+   - Configured `applicationId = "com.SensorsOff"` in `app/build.gradle.kts`.
+2. **Creator Attribution**:
+   - Added `creator_name` string resource and displayed "Created by zakeer-career" badge and system specification info in `MainActivity.kt`.
+3. **Version Increment**:
+   - Updated `versionCode = 36` and `versionName = "2.7.9"`.
 
 ---
 
