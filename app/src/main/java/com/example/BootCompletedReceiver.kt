@@ -43,12 +43,14 @@ class BootCompletedReceiver : BroadcastReceiver() {
                     if (ShizukuManager.isRootAvailable() && !ShizukuManager.isShizukuRunning()) {
                         ShizukuManager.tryAutoStartShizukuViaRoot(context)
                     }
-                } catch (e: Throwable) {
+                } catch (e: Exception) {
                     Log.d("BootCompletedReceiver", "Root auto-start note: ${e.message}")
                 }
             }
-        } catch (e: Throwable) {
-            Log.e("BootCompletedReceiver", "Failed to process boot event", e)
+        } catch (e: SecurityException) {
+            Log.e("BootCompletedReceiver", "SecurityException processing boot event", e)
+        } catch (e: Exception) {
+            Log.e("BootCompletedReceiver", "Exception processing boot event", e)
         }
     }
 }

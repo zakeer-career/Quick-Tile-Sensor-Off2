@@ -269,7 +269,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
         val current = _uiState.value.isSensorsOff
         val target = !current
 
-        // 1. Instant Optimistic UI Update (0ms delay)
+        // 1. Optimistic UI Update
         val updatedSensors = _uiState.value.sensorList.map { it.copy(isBlocked = target) }
         _uiState.update { it.copy(isSensorsOff = target, sensorList = updatedSensors) }
         addLog("Action: Toggling Master SensorsOff to ${if (target) "ENABLED (Sensors Off)" else "DISABLED (Sensors On)"}...")
@@ -300,7 +300,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
         val currentSensor = _uiState.value.sensorList.find { it.id == sensorId } ?: return
         val targetState = !currentSensor.isBlocked
 
-        // 1. Instant Optimistic UI Update (0ms delay)
+        // 1. Optimistic UI Update
         val updatedSensors = _uiState.value.sensorList.map {
             if (it.id == sensorId) it.copy(isBlocked = targetState) else it
         }

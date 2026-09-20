@@ -8,31 +8,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ## [2.7.8] - 2026-09-20
 
-### Purge POST_NOTIFICATIONS Permission & Align In-App Architecture Highlights
+### Production-Hardening Pass: Sensor Privacy IPC Robustness, Authoritative State Sync & Zero-Daemon Safety
 
 #### Problem Analysis
-- **Unused Notification Permission**:
-  - `android.permission.POST_NOTIFICATIONS` was declared in `app/src/main/AndroidManifest.xml` purely for the legacy foreground keep-alive service.
-  - With zero background services or notifications in the on-demand architecture, requesting `POST_NOTIFICATIONS` was obsolete.
-- **Outdated Highlights**:
-  - `MainActivity.kt` retained an outdated changelog highlight referencing an "Ultra-Reliable Background Service" and "Keep-alive foreground daemon".
+- **Unused Legacy Permission & Battery Optimization Residue**:
+  - `android.permission.POST_NOTIFICATIONS` and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` were residual artifacts from prior background service implementations.
+  - UI copy contained claims of "0ms" or "0.2ms" response times that didn't account for varying device IPC and binder scheduler variations.
+- **AIDL Transaction Code Vulnerability**:
+  - Raw AIDL transaction codes for `ISensorPrivacyManager` (`setSensorPrivacy`, `isSensorPrivacyEnabled`, `supportsSensorToggle`) were previously scattered as ad-hoc magic numbers across reflection and Binder fallback branches, risking transaction code collisions on differing Android API releases (Android 10 Q, Android 11 R, Android 12+ S).
+- **Concurrency & Rapid QS Tap Race Conditions**:
+  - Extremely rapid user tapping on the Quick Settings tile could queue competing background shell or Binder invocations, leading to state desynchronization.
+- **Authoritative State Sync**:
+  - Quick Settings tile updates needed guaranteed verification by re-querying system state (`ISensorPrivacyManager` and `Settings.Global.sensors_off`) after executing toggles.
 
 #### Root Cause
-- Residual manifest permission and UI text from previous background service iterations remained after service removal.
+- Decentralized AIDL transaction code definitions, lingering battery optimization references after daemon removal, and lack of explicit rapid-tap coalescing with post-toggle state confirmation.
 
 #### Code Changes
-1. **`app/src/main/AndroidManifest.xml`**:
-   - Removed `<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />`.
-2. **`app/src/main/java/com/example/MainActivity.kt`**:
-   - Replaced "Ultra-Reliable Background Service" with "On-Demand Architecture" and updated description to: "SensorsOff operates through the Android Quick Settings Tile and Shizuku without a permanent background service."
-3. **`app/build.gradle.kts`**:
-   - Bumped `versionCode` to 35 and `versionName` to "2.7.8".
+1. **`app/src/main/java/com/example/SensorPrivacyCodes.kt`**:
+   - Centralized all platform-specific Binder transaction codes across Android S (API 31+), Android R (API 30), and Android Q (API 29) for `setSensorPrivacy`, `isSensorPrivacyEnabled`, `supportsSensorToggle`, and sensor types (microphone, camera).
+2. **`app/src/main/java/com/example/ShizukuManager.kt`**:
+   - Hardened `setSensorsOffState`, `getSensorsOffState`, `setIndividualSensorState`, and `getIndividualSensorState` with structured exception handling (`SecurityException`, `RemoteException`, `NoSuchMethodException`).
+   - Hardened `runRootCommand` and `runShizukuCommand` with dedicated process cleanup and stream consumption.
+   - Refactored all direct binder invocations to utilize `SensorPrivacyCodes`.
+3. **`app/src/main/java/com/example/SensorsOffTileService.kt`**:
+   - Implemented rapid-tap coalescing in `toggleChannel` worker loop, ensuring back-to-back click events collapse to the latest intended state without redundant process forks.
+   - Guaranteed authoritative state sync: re-queries `ShizukuManager.getSensorsOffState()` or individual sensor states after toggle completion before committing tile UI state.
+   - Hardened lifecycle methods (`onStartListening`, `onStopListening`, `onDestroy`, `onClick`) with specific exception handling.
+   - Sanitized diagnostic logging copy to accurately describe state transitions without misleading timing claims.
+4. **`app/src/main/java/com/example/BootCompletedReceiver.kt`**:
+   - Hardened `onReceive` with dedicated `SecurityException` and structured error handling.
+   - Preserves non-daemon tile pre-warming via `TileService.requestListeningState` and auto-starts Shizuku only if root is available.
+5. **`app/src/main/java/com/example/MainActivity.kt`**:
+   - Purged `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` and battery exemption UI.
+   - Replaced deprecated vector icon references with `Icons.AutoMirrored` variants.
+   - Aligned changelog and reboot optimization copy to focus on on-demand architecture.
+6. **`app/src/main/AndroidManifest.xml`**:
+   - Purged `POST_NOTIFICATIONS` and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`.
+7. **`app/src/test/java/com/example/ExampleRobolectricTest.kt`**:
+   - Added unit tests for `TileSettingsState` defaults and `TileLogManager` telemetry flow.
 
 #### Telemetry & Verification
-- `SensorsOffBackgroundService`: 0 references across executable code.
+- `SensorsOffBackgroundService`: 0 references across entire project.
 - `startForeground(`: 0 references across executable code.
 - `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_SPECIAL_USE`: 0 in `AndroidManifest.xml`.
-- `POST_NOTIFICATIONS`: 0 in `AndroidManifest.xml`.
+- `POST_NOTIFICATIONS` and `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`: 0 in `AndroidManifest.xml`.
+- Local JVM unit tests executed via Gradle: 100% passing (`BUILD SUCCESSFUL`).
 - `SensorsOffTileService`, `BootCompletedReceiver`, and `ShizukuManager` verified intact.
 
 ---

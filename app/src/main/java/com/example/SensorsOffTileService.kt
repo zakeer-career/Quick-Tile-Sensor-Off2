@@ -25,10 +25,10 @@ import kotlinx.coroutines.withContext
 /**
  * Ultra-optimized Quick Settings Tile Service for SensorsOff.
  * Features:
- * - 0ms synchronous optimistic UI switching (identical to native AOSP developer tile)
- * - Zero allocations on click via pre-cached Icon and String handles
+ * - Synchronous optimistic UI switching (identical to native AOSP developer tile)
+ * - Minimal allocations on click via pre-cached Icon and String handles
  * - Real-time ContentObserver for instant reactivity to external system setting changes
- * - Redundant IPC elimination to preserve 120Hz/90Hz QS shade smoothness
+ * - Redundant IPC elimination to preserve QS shade smoothness
  */
 class SensorsOffTileService : TileService() {
 
@@ -82,7 +82,9 @@ class SensorsOffTileService : TileService() {
                 false,
                 settingsObserver
             )
-        } catch (e: Throwable) {
+        } catch (e: SecurityException) {
+            Log.w(TAG, "SecurityException registering settings observer: ${e.message}")
+        } catch (e: Exception) {
             Log.d(TAG, "ContentObserver registration note: ${e.message}")
         }
 
@@ -149,7 +151,7 @@ class SensorsOffTileService : TileService() {
         super.onDestroy()
         try {
             contentResolver.unregisterContentObserver(settingsObserver)
-        } catch (e: Throwable) {}
+        } catch (e: Exception) {}
         TileLogManager.logTileEvent(
             applicationContext,
             "Tile Service Destroyed",
@@ -195,7 +197,7 @@ class SensorsOffTileService : TileService() {
                 cachedActiveIcon = Icon.createWithResource(this, actRes)
                 cachedInactiveIcon = Icon.createWithResource(this, inactRes)
             }
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             Log.e(TAG, "Error caching visual configuration", e)
         }
     }
@@ -216,10 +218,10 @@ class SensorsOffTileService : TileService() {
             return
         }
 
-        // 1. Instant 0ms refresh from system settings / in-memory cache
+        // 1. Instant refresh from system settings / in-memory cache
         refreshTileImmediately()
 
-        // 2. Ultra-fast asynchronous query (< 1ms on IO) to keep tile 100% in sync
+        // 2. Fast asynchronous query to keep tile in sync
         listeningJob = serviceScope.launch(Dispatchers.IO) {
             try {
                 val isSensorsOff = if (cachedBlockMode == "cam_mic") {
@@ -235,7 +237,7 @@ class SensorsOffTileService : TileService() {
                         updateTileState(isSensorsOff)
                     }
                 }
-            } catch (e: Throwable) {
+            } catch (e: Exception) {
                 if (e !is kotlinx.coroutines.CancellationException) {
                     Log.d(TAG, "Listening query note: ${e.message}")
                 }
@@ -256,7 +258,7 @@ class SensorsOffTileService : TileService() {
             } else {
                 val globalVal = try {
                     Settings.Global.getInt(applicationContext.contentResolver, "sensors_off", -1)
-                } catch (e: Throwable) { -1 }
+                } catch (e: Exception) { -1 }
                 if (globalVal != -1) {
                     globalVal == 1
                 } else {
@@ -269,7 +271,7 @@ class SensorsOffTileService : TileService() {
                 }
             }
             updateTileState(isSensorsOff)
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             Log.e(TAG, "Error in immediate tile refresh", e)
         }
     }
@@ -281,7 +283,7 @@ class SensorsOffTileService : TileService() {
         // 1. Abort any background listening query
         listeningJob?.cancel()
 
-        // 2. Instant 0ms determination of target state (flawlessly accounting for rapid in-flight clicks)
+        // 2. Determination of target state accounting for in-flight clicks
         val now = System.currentTimeMillis()
         val isCurrentlyActive = if (pendingTargetState != null && now < pendingTargetExpiryTimeMs) {
             pendingTargetState!!
@@ -329,13 +331,13 @@ class SensorsOffTileService : TileService() {
         pendingTargetState = target
         pendingTargetExpiryTimeMs = System.currentTimeMillis() + 2000L
 
-        // 5. Instant synchronous UI update (0ms, zero allocations)
+        // 5. Update UI state
         updateTileState(target)
 
         TileLogManager.logTileEvent(
             applicationContext,
             "QS Tile Tap Event",
-            "Touch -> UI flip in 0ms (Target: ${if (target) "ON" else "OFF"})",
+            "Touch -> Updating tile state (Target: ${if (target) "ON" else "OFF"})",
             LogLevel.INFO
         )
 
@@ -369,7 +371,7 @@ class SensorsOffTileService : TileService() {
                 @Suppress("DEPRECATION")
                 startActivityAndCollapse(intent)
             }
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             Log.e(TAG, "Failed to launch Shizuku: ${e.message}")
         }
     }

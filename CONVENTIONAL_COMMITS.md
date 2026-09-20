@@ -14,27 +14,36 @@ Each commit entry includes:
 ### [v2.7.8] - 2026-09-20
 
 ```git
-refactor(manifest): remove POST_NOTIFICATIONS and align architecture highlights
+refactor(security): harden sensor privacy ipc, state sync, and purge legacy battery artifacts
 
 Problem:
-1. Manifest declared android.permission.POST_NOTIFICATIONS which was only used for the deprecated background keep-alive service.
-2. MainActivity contained outdated changelog highlight referencing an Ultra-Reliable Background Service.
+1. Residual battery optimization and notification permissions lingered from legacy foreground daemon.
+2. Direct ISensorPrivacyManager Binder transaction codes were defined as ad-hoc magic numbers across fallback branches.
+3. Rapid clicks on Quick Settings tile could create redundant background process executions.
+4. UI copy contained unverified "0ms" response claims.
 
 Root Cause:
-1. Legacy permission and UI copy from earlier background service implementations lingered.
+1. Incomplete cleanup of battery optimization exemption code and lack of centralized AIDL transaction code repository.
+2. Quick Settings tile lacked coalesced tap queueing with authoritative post-toggle hardware state verification.
 
 Changes:
-- AndroidManifest.xml: Removed android.permission.POST_NOTIFICATIONS declaration.
-- MainActivity.kt: Replaced Ultra-Reliable Background Service with On-Demand Architecture in changelog highlights.
-- app/build.gradle.kts: Bumped versionCode to 35 and versionName to 2.7.8.
+- SensorPrivacyCodes.kt: Centralized AIDL transaction codes across Android S (31+), R (30), and Q (29).
+- ShizukuManager.kt: Hardened IPC error handling (SecurityException, RemoteException), integrated SensorPrivacyCodes, improved root process cleanup.
+- SensorsOffTileService.kt: Coalesced rapid clicks in channel worker, authoritative state re-check after toggle, sanitized logging copy.
+- BootCompletedReceiver.kt: Hardened exception handling for boot-time triggers.
+- MainActivity.kt: Removed battery exemption UI and REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, updated icons to AutoMirrored, aligned copy.
+- AndroidManifest.xml: Purged POST_NOTIFICATIONS and REQUEST_IGNORE_BATTERY_OPTIMIZATIONS.
+- ExampleRobolectricTest.kt: Added tests for tile configuration defaults and telemetry log persistence.
+- app/build.gradle.kts: Set versionCode 35, versionName 2.7.8.
 
 Verification:
 - compile_applet: Succeeded.
+- gradle :app:testDebugUnitTest: Succeeded (100% tests green).
 - SensorsOffBackgroundService: 0 occurrences.
 - startForeground(: 0 occurrences.
 - FOREGROUND_SERVICE / FOREGROUND_SERVICE_SPECIAL_USE: 0 in AndroidManifest.xml.
-- POST_NOTIFICATIONS: 0 in AndroidManifest.xml.
-- SensorsOffTileService, BootCompletedReceiver, ShizukuManager: Verified present.
+- POST_NOTIFICATIONS / REQUEST_IGNORE_BATTERY_OPTIMIZATIONS: 0 in AndroidManifest.xml.
+- SensorsOffTileService, BootCompletedReceiver, ShizukuManager: Verified present and robust.
 ```
 
 ---

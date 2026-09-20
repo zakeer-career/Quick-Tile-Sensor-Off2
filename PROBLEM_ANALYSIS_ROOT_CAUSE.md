@@ -41,25 +41,41 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ---
 
-### [v2.7.8] - Removal of POST_NOTIFICATIONS Permission & Alignment of On-Demand Changelog Copy
+### [v2.7.8] - Production-Hardening Pass: Sensor Privacy IPC Robustness, Authoritative State Sync & Zero-Daemon Safety
 
 #### Problem Analysis
-- **Unused POST_NOTIFICATIONS Permission**:
-  - Following the complete eradication of `SensorsOffBackgroundService`, `POST_NOTIFICATIONS` remained declared in `app/src/main/AndroidManifest.xml`.
-  - Because the app operates 100% on-demand via `SensorsOffTileService` and posts no notifications, requesting notification permissions was unnecessary.
-- **Outdated UI Highlights**:
-  - In `MainActivity.kt`, the changelog highlights section still advertised an "Ultra-Reliable Background Service" with a "Keep-alive foreground daemon".
+- **Unused POST_NOTIFICATIONS & REQUEST_IGNORE_BATTERY_OPTIMIZATIONS**:
+  - Following the complete eradication of `SensorsOffBackgroundService`, legacy permissions and battery exemption UI elements remained in the app.
+  - Requesting notification permissions and battery exemptions on a pure on-demand Quick Settings tile created unnecessary Play Policy and privacy scrutiny.
+- **AIDL Transaction Code Fragility**:
+  - Raw Binder transaction codes for `ISensorPrivacyManager` were scattered as ad-hoc magic numbers across fallback branches, risking transaction code collisions across different Android API releases (Android 10 Q, Android 11 R, Android 12+ S).
+- **Concurrency & Rapid QS Tap Race Conditions**:
+  - Rapidly tapping the Quick Settings tile could enqueue overlapping background tasks, leading to out-of-order execution or state desynchronization.
+- **Authoritative Tile Verification**:
+  - Quick Settings tile updates required verified state reconciliation by querying `ISensorPrivacyManager` after toggle completion to avoid UI-hardware drift.
 
 #### Root Cause
-- Residual manifest declarations and static UI copy persisted across the transition to pure on-demand architecture.
+- Decentralized AIDL transaction code definitions, lack of rapid-tap coalescing in tile worker coroutines, and lingering battery exemption artifacts from earlier daemon architectures.
 
 #### Engineered Resolution & Impact
-1. **Manifest Cleanup**:
-   - Removed `android.permission.POST_NOTIFICATIONS` from `app/src/main/AndroidManifest.xml`.
-2. **UI Copy Alignment**:
-   - Replaced "Ultra-Reliable Background Service" with "On-Demand Architecture" and updated description to: "SensorsOff operates through the Android Quick Settings Tile and Shizuku without a permanent background service."
-3. **Verification**:
-   - Confirmed 0 references to foreground services or notifications in executable code or manifest.
+1. **AIDL Transaction Centralization**:
+   - Implemented `SensorPrivacyCodes.kt` centralizing all platform-specific Binder transaction codes across Android S (API 31+), Android R (API 30), and Android Q (API 29) for `setSensorPrivacy`, `isSensorPrivacyEnabled`, `supportsSensorToggle`, and sensor types.
+2. **IPC & Shell Command Hardening**:
+   - Hardened `ShizukuManager` methods (`setSensorsOffState`, `getSensorsOffState`, `setIndividualSensorState`, `getIndividualSensorState`) with targeted exception handling for `SecurityException`, `RemoteException`, and `NoSuchMethodException`.
+   - Hardened root and Shizuku command execution with explicit stream draining and process termination.
+3. **Tile Service Concurrency & Authoritative State Sync**:
+   - Implemented rapid-click coalescing in `SensorsOffTileService`, collapsing consecutive clicks into the latest intended state.
+   - Guaranteed post-toggle authoritative state re-check from system services before finalizing tile UI.
+   - Hardened all tile lifecycle callbacks (`onStartListening`, `onStopListening`, `onDestroy`, `onClick`).
+4. **Boot Completed Hardening**:
+   - Hardened `BootCompletedReceiver` with dedicated `SecurityException` handling.
+5. **UI & Manifest Cleanup**:
+   - Purged `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` and battery exemption UI.
+   - Removed `POST_NOTIFICATIONS` from `AndroidManifest.xml`.
+   - Replaced deprecated icon vectors with `Icons.AutoMirrored` variants.
+   - Aligned copy to highlight on-demand architecture without misleading "0ms" claims.
+6. **Automated JVM Test Coverage**:
+   - Added unit tests in `ExampleRobolectricTest.kt` verifying `TileSettingsState` and `TileLogManager` telemetry persistence. All tests execute and pass via Gradle.
 
 ---
 

@@ -23,6 +23,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
+import androidx.compose.material.icons.automirrored.filled.Launch
+import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -1164,7 +1167,7 @@ fun SleekSensorsStatusCard(
                             val icon = when (sensor.id) {
                                 "camera" -> Icons.Default.PhotoCamera
                                 "mic" -> Icons.Default.Mic
-                                "motion" -> Icons.Default.DirectionsRun
+                                "motion" -> Icons.AutoMirrored.Filled.DirectionsRun
                                 "gyro" -> Icons.Default.ScreenRotation
                                 "proximity" -> Icons.Default.Sensors
                                 else -> Icons.Default.WbSunny
@@ -1253,7 +1256,7 @@ fun SleekSensorRow(
     val icon = when (sensor.id) {
         "camera" -> Icons.Default.PhotoCamera
         "mic" -> Icons.Default.Mic
-        "motion" -> Icons.Default.DirectionsRun
+        "motion" -> Icons.AutoMirrored.Filled.DirectionsRun
         "gyro" -> Icons.Default.ScreenRotation
         "proximity" -> Icons.Default.Sensors
         else -> Icons.Default.WbSunny
@@ -2037,8 +2040,8 @@ fun SleekAboutTabContent(
                     Spacer(modifier = Modifier.height(14.dp))
 
                     val changelogHighlights = listOf(
-                        "Zero-Allocation Touch Path" to "Pre-cached Icon and String handles in RAM ensure zero memory allocations and 0ms instantaneous UI flips on every tap.",
-                        "Direct Binder IPC" to "Native SensorPrivacy Binder IPC (< 1ms), completely bypassing shell process fork overhead.",
+                        "Zero-Allocation Touch Path" to "Pre-cached Icon and String handles in RAM ensure zero memory allocations and instantaneous UI flips on every tap.",
+                        "Direct Binder IPC" to "Native SensorPrivacy Binder IPC, completely bypassing shell process fork overhead.",
                         "Real-time ContentObserver" to "Instant zero-polling synchronization with Android Settings.Global & Settings.Secure sensor keys.",
                         "Redundant IPC Elimination" to "Eliminated redundant updateTile() calls to SystemUI, preserving 120Hz/90Hz Quick Settings shade fluidity.",
                         "On-Demand Architecture" to "SensorsOff operates through the Android Quick Settings Tile and Shizuku without a permanent background service."
@@ -2270,38 +2273,6 @@ fun SleekAboutTabContent(
                         OutlinedButton(
                             onClick = {
                                 try {
-                                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                        data = android.net.Uri.parse("package:${context.packageName}")
-                                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    }
-                                    context.startActivity(intent)
-                                } catch (e: Exception) {
-                                    try {
-                                        val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
-                                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                        }
-                                        context.startActivity(intent)
-                                    } catch (e2: Exception) {
-                                        Toast.makeText(context, "Battery settings not directly accessible", Toast.LENGTH_SHORT).show()
-                                    }
-                                }
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.BatteryChargingFull,
-                                contentDescription = "Battery",
-                                modifier = Modifier.size(16.dp),
-                                tint = colors.accentGreen
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Battery Unrestricted", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = colors.accentGreen)
-                        }
-
-                        OutlinedButton(
-                            onClick = {
-                                try {
                                     val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                                         data = android.net.Uri.parse("package:${context.packageName}")
                                         addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -2312,7 +2283,7 @@ fun SleekAboutTabContent(
                                 }
                             },
                             shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Settings,
@@ -2321,7 +2292,7 @@ fun SleekAboutTabContent(
                                 tint = colors.accentBlue
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("App Info / Autostart", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = colors.accentBlue)
+                            Text("App Info / Permissions", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = colors.accentBlue)
                         }
                     }
                 }
@@ -2398,7 +2369,7 @@ fun SleekNavigationBar(
                 onClick = { onTabSelected(SleekTab.HOME) }
             )
             SleekNavItem(
-                icon = Icons.Default.ListAlt,
+                icon = Icons.AutoMirrored.Filled.ListAlt,
                 label = "Telemetry",
                 isSelected = selectedTab == SleekTab.LOGS,
                 onClick = { onTabSelected(SleekTab.LOGS) }
@@ -2445,25 +2416,6 @@ fun SleekNavItem(
 @Composable
 fun SleekOnDemandModeCard() {
     val colors = LocalAppColors.current
-    val context = LocalContext.current
-
-    val powerManager = remember { context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager }
-    var isIgnoringBattery by remember {
-        mutableStateOf(powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true)
-    }
-
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                isIgnoringBattery = powerManager?.isIgnoringBatteryOptimizations(context.packageName) == true
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -2519,7 +2471,7 @@ fun SleekOnDemandModeCard() {
                         }
                     }
                     Text(
-                        text = "SensorsOff runs through the Quick Settings Tile when needed",
+                        text = "SensorsOff operates exclusively on-demand via Quick Settings",
                         fontSize = 11.sp,
                         color = colors.textSecondary
                     )
@@ -2529,58 +2481,11 @@ fun SleekOnDemandModeCard() {
             Spacer(modifier = Modifier.height(10.dp))
 
             Text(
-                text = "SensorsOff runs through the Quick Settings Tile when needed. No permanent background service is running.",
+                text = "SensorsOff operates exclusively when triggered through the Quick Settings Tile or app interface. No background service, daemon, or wake locks are used, ensuring 0% idle battery consumption.",
                 fontSize = 12.sp,
                 color = colors.textSecondary,
                 lineHeight = 17.sp
             )
-
-            Spacer(modifier = Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = {
-                    if (isIgnoringBattery) {
-                        Toast.makeText(context, "Battery optimization is already disabled (SensorsOff is Unrestricted)!", Toast.LENGTH_SHORT).show()
-                    } else {
-                        try {
-                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                                data = android.net.Uri.parse("package:${context.packageName}")
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            }
-                            context.startActivity(intent)
-                        } catch (e: Exception) {
-                            try {
-                                val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
-                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                context.startActivity(intent)
-                            } catch (_: Exception) {}
-                        }
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
-                ),
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    if (isIgnoringBattery) colors.accentGreen.copy(alpha = 0.5f) else colors.accentCyan.copy(alpha = 0.5f)
-                )
-            ) {
-                Icon(
-                    imageVector = if (isIgnoringBattery) Icons.Default.CheckCircle else Icons.Default.BatteryChargingFull,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    text = if (isIgnoringBattery) "Battery Optimization Excluded (Unrestricted)" else "Exclude from Battery Optimization (Direct Prompt)",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = if (isIgnoringBattery) colors.accentGreen else colors.accentCyan
-                )
-            }
         }
     }
 }
@@ -2640,7 +2545,7 @@ fun SleekRebootOptimizationCard(
                         letterSpacing = 1.2.sp
                     )
                     Text(
-                        text = if (hasSecureSettings) "Permanent 0ms Instant Boot Active" else "Optimize startup response after reboot",
+                        text = if (hasSecureSettings) "Permanent Instant Boot Active" else "Optimize startup response after reboot",
                         fontSize = 11.sp,
                         color = colors.textSecondary
                     )
@@ -2658,7 +2563,7 @@ fun SleekRebootOptimizationCard(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Option 1: Instant Boot Mode via ADB (Permanent, 0ms on boot)
+            // Option 1: Instant Boot Mode via ADB (Permanent on boot)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2695,9 +2600,9 @@ fun SleekRebootOptimizationCard(
 
                     Text(
                         text = if (hasSecureSettings) {
-                            "WRITE_SECURE_SETTINGS is granted! Quick Settings tile toggles sensor privacy in 0.2ms immediately upon device reboot with zero wait for Shizuku."
+                            "WRITE_SECURE_SETTINGS is granted! Quick Settings tile toggles sensor privacy directly upon device reboot with zero wait for Shizuku."
                         } else {
-                            "Grant WRITE_SECURE_SETTINGS once via computer ADB. This allows SensorsOff to write hardware sensor privacy directly on boot with 0-second delay, completely independent of Shizuku."
+                            "Grant WRITE_SECURE_SETTINGS once via computer ADB. This allows SensorsOff to write hardware sensor privacy directly on boot with minimal delay, completely independent of Shizuku."
                         },
                         fontSize = 11.sp,
                         color = colors.textSecondary,
@@ -2763,7 +2668,7 @@ fun SleekRebootOptimizationCard(
                     )
                 ) {
                     Icon(
-                        imageVector = if (isShizukuAuthorized) Icons.Default.CheckCircle else Icons.Default.Launch,
+                        imageVector = if (isShizukuAuthorized) Icons.Default.CheckCircle else Icons.AutoMirrored.Filled.Launch,
                         contentDescription = null,
                         modifier = Modifier.size(14.dp)
                     )
