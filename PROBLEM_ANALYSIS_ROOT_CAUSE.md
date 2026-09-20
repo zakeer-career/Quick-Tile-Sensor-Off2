@@ -85,6 +85,10 @@ This document serves as the canonical technical post-mortem and engineering anal
    - Commented out unused dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck) in `app/build.gradle.kts`.
 7. **Comprehensive Robolectric JVM Test Suite**:
    - Added Robolectric tests in `ExampleRobolectricTest.kt` covering Shizuku failure scenarios, `CommandResult` contracts, `SensorPrivacyCodes` validation, state read-back persistence, and concurrent multi-threaded safety under rapid toggles. All 31 Gradle tasks pass cleanly.
+8. **Application ID & Creator Identity**:
+   - Updated `applicationId` to `com.SensorsOff` in `app/build.gradle.kts`.
+   - Added string resource `<string name="creator_name">zakeer-career</string>`.
+   - Displayed "Created by zakeer-career" branding and system info attributes in `MainActivity.kt`.
 
 ---
 

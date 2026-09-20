@@ -7,4 +7,5 @@
     <string name="shizuku_permission_denied">Shizuku permission denied</string>
     <string name="sensors_status_active">Sensors Disabled (Private)</string>
     <string name="sensors_status_inactive">Sensors Enabled (Active)</string>
+    <string name="creator_name">zakeer-career</string>
 </resources>

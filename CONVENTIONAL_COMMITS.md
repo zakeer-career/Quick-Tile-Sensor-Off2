@@ -45,7 +45,11 @@ Changes:
   * Removed LOCKED_BOOT_COMPLETED filter to respect credential encrypted storage.
   * Purged POST_NOTIFICATIONS and REQUEST_IGNORE_BATTERY_OPTIMIZATIONS.
 - app/build.gradle.kts:
+  * Set applicationId = "com.SensorsOff".
   * Commented out unused dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck).
+- app/src/main/res/values/strings.xml & MainActivity.kt:
+  * Added creator_name string resource "zakeer-career".
+  * Added creator badge and system spec row for "zakeer-career" and applicationId "com.SensorsOff".
 - ExampleRobolectricTest.kt:
   * Added Robolectric tests covering Shizuku failure resilience, CommandResult data contract, SensorPrivacyCodes validation, read-back verification, and concurrent rapid-tap thread safety.
 

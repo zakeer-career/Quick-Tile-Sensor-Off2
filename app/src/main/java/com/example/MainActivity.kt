@@ -1981,6 +1981,15 @@ fun SleekAboutTabContent(
                         color = colors.textSecondary
                     )
 
+                    Spacer(modifier = Modifier.height(4.dp))
+
+                    Text(
+                        text = "Created by zakeer-career",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = colors.accentBlue
+                    )
+
                     Spacer(modifier = Modifier.height(14.dp))
 
                     Text(
@@ -2098,6 +2107,8 @@ fun SleekAboutTabContent(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    SleekInfoRow(label = "Creator", value = "zakeer-career")
+                    SleekInfoRow(label = "Application ID", value = context.packageName)
                     SleekInfoRow(label = "Manufacturer", value = uiState.deviceManufacturer.ifBlank { "Standard" })
                     SleekInfoRow(label = "Device Model", value = uiState.deviceModel.ifBlank { "Android Device" })
                     SleekInfoRow(label = "Android Release", value = "Android ${uiState.androidVersion}")

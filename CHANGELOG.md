@@ -25,12 +25,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Quick Settings tile updates needed guaranteed verification by re-querying system state (`ISensorPrivacyManager` and `Settings.Global.sensors_off`) after executing toggles.
 - **APK Bloat**:
   - Unused dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck) in `app/build.gradle.kts` increased build times and package size.
+- **Application ID & Creator Identity**:
+  - `applicationId` was previously generated as an ad-hoc placeholder (`com.aistudio.sensorsoff.pomujq`).
+  - The application lacked explicit creator attribution ("zakeer-career") in resource strings and the About screen.
 
 #### Root Cause
 - Decentralized AIDL transaction code definitions, lingering battery optimization references after daemon removal, lack of structured command result wrapping with asynchronous stream consumption, and lack of explicit rapid-tap coalescing with post-toggle state confirmation.
 
 #### Code Changes
-1. **`app/src/main/java/com/example/ShizukuManager.kt`**:
+1. **`app/build.gradle.kts`**:
+   - Set `applicationId = "com.SensorsOff"`.
+   - Commented out unused dependencies (Retrofit, Moshi, OkHttp, Room, Firebase AI/AppCheck) to optimize APK size and compilation speed.
+2. **`app/src/main/res/values/strings.xml`**:
+   - Added string resource `<string name="creator_name">zakeer-career</string>`.
+3. **`app/src/main/java/com/example/MainActivity.kt`**:
+   - Added "Created by zakeer-career" visual badge in `SleekAboutTabContent` header card.
+   - Added "Creator: zakeer-career" and "Application ID: com.SensorsOff" in System Specifications info list.
+   - Purged `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` and battery exemption UI.
+   - Replaced deprecated vector icon references with `Icons.AutoMirrored` variants.
+   - Aligned changelog and reboot optimization copy to focus on on-demand architecture.
+4. **`app/src/main/java/com/example/ShizukuManager.kt`**:
    - Introduced structured `CommandResult` data class exposing `success`, `exitCode`, `stdout`, and `stderr`.
    - Refactored `runShizukuCommand` and `runRootCommand` with dedicated background threads for concurrent stdout/stderr stream consumption and process timeout handling to prevent buffer deadlocks.
    - Introduced `stateOperationLock = ReentrantLock()` to serialize state modifications and prevent reentrant race conditions.
