@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.7.8 - Removal of POST_NOTIFICATIONS Permission & Alignment of On-Demand Changelog Copy](#v278---removal-of-post_notifications-permission--alignment-of-on-demand-changelog-copy)
 - [v2.7.7 - Purge of Obsolete Keep-Alive UI and Preferences for Pure On-Demand Operation](#v277---purge-of-obsolete-keep-alive-ui-and-preferences-for-pure-on-demand-operation)
 - [v2.7.6 - Complete Removal of Foreground Keep-Alive Service & Adoption of Pure On-Demand Architecture](#v276---complete-removal-of-foreground-keep-alive-service--adoption-of-pure-on-demand-architecture)
 - [v2.7.5 - Active Tile Declaration, Channel Event-Preservation, Multi-User Isolation & Authoritative Hardware State Sync](#v275---active-tile-declaration-channel-event-preservation-multi-user-isolation--authoritative-hardware-state-sync)
@@ -37,6 +38,28 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.7.8] - Removal of POST_NOTIFICATIONS Permission & Alignment of On-Demand Changelog Copy
+
+#### Problem Analysis
+- **Unused POST_NOTIFICATIONS Permission**:
+  - Following the complete eradication of `SensorsOffBackgroundService`, `POST_NOTIFICATIONS` remained declared in `app/src/main/AndroidManifest.xml`.
+  - Because the app operates 100% on-demand via `SensorsOffTileService` and posts no notifications, requesting notification permissions was unnecessary.
+- **Outdated UI Highlights**:
+  - In `MainActivity.kt`, the changelog highlights section still advertised an "Ultra-Reliable Background Service" with a "Keep-alive foreground daemon".
+
+#### Root Cause
+- Residual manifest declarations and static UI copy persisted across the transition to pure on-demand architecture.
+
+#### Engineered Resolution & Impact
+1. **Manifest Cleanup**:
+   - Removed `android.permission.POST_NOTIFICATIONS` from `app/src/main/AndroidManifest.xml`.
+2. **UI Copy Alignment**:
+   - Replaced "Ultra-Reliable Background Service" with "On-Demand Architecture" and updated description to: "SensorsOff operates through the Android Quick Settings Tile and Shizuku without a permanent background service."
+3. **Verification**:
+   - Confirmed 0 references to foreground services or notifications in executable code or manifest.
 
 ---
 

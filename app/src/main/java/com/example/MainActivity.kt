@@ -2041,7 +2041,7 @@ fun SleekAboutTabContent(
                         "Direct Binder IPC" to "Native SensorPrivacy Binder IPC (< 1ms), completely bypassing shell process fork overhead.",
                         "Real-time ContentObserver" to "Instant zero-polling synchronization with Android Settings.Global & Settings.Secure sensor keys.",
                         "Redundant IPC Elimination" to "Eliminated redundant updateTile() calls to SystemUI, preserving 120Hz/90Hz Quick Settings shade fluidity.",
-                        "Ultra-Reliable Background Service" to "Keep-alive foreground daemon protects Shizuku IPC connection against aggressive OEM task killers."
+                        "On-Demand Architecture" to "SensorsOff operates through the Android Quick Settings Tile and Shizuku without a permanent background service."
                     )
 
                     changelogHighlights.forEachIndexed { index, (title, desc) ->

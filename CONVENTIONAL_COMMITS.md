@@ -11,6 +11,34 @@ Each commit entry includes:
 
 ---
 
+### [v2.7.8] - 2026-09-20
+
+```git
+refactor(manifest): remove POST_NOTIFICATIONS and align architecture highlights
+
+Problem:
+1. Manifest declared android.permission.POST_NOTIFICATIONS which was only used for the deprecated background keep-alive service.
+2. MainActivity contained outdated changelog highlight referencing an Ultra-Reliable Background Service.
+
+Root Cause:
+1. Legacy permission and UI copy from earlier background service implementations lingered.
+
+Changes:
+- AndroidManifest.xml: Removed android.permission.POST_NOTIFICATIONS declaration.
+- MainActivity.kt: Replaced Ultra-Reliable Background Service with On-Demand Architecture in changelog highlights.
+- app/build.gradle.kts: Bumped versionCode to 35 and versionName to 2.7.8.
+
+Verification:
+- compile_applet: Succeeded.
+- SensorsOffBackgroundService: 0 occurrences.
+- startForeground(: 0 occurrences.
+- FOREGROUND_SERVICE / FOREGROUND_SERVICE_SPECIAL_USE: 0 in AndroidManifest.xml.
+- POST_NOTIFICATIONS: 0 in AndroidManifest.xml.
+- SensorsOffTileService, BootCompletedReceiver, ShizukuManager: Verified present.
+```
+
+---
+
 ### [v2.7.7] - 2026-09-20
 
 ```git

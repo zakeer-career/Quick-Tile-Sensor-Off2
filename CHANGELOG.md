@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.7.8] - 2026-09-20
+
+### Purge POST_NOTIFICATIONS Permission & Align In-App Architecture Highlights
+
+#### Problem Analysis
+- **Unused Notification Permission**:
+  - `android.permission.POST_NOTIFICATIONS` was declared in `app/src/main/AndroidManifest.xml` purely for the legacy foreground keep-alive service.
+  - With zero background services or notifications in the on-demand architecture, requesting `POST_NOTIFICATIONS` was obsolete.
+- **Outdated Highlights**:
+  - `MainActivity.kt` retained an outdated changelog highlight referencing an "Ultra-Reliable Background Service" and "Keep-alive foreground daemon".
+
+#### Root Cause
+- Residual manifest permission and UI text from previous background service iterations remained after service removal.
+
+#### Code Changes
+1. **`app/src/main/AndroidManifest.xml`**:
+   - Removed `<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />`.
+2. **`app/src/main/java/com/example/MainActivity.kt`**:
+   - Replaced "Ultra-Reliable Background Service" with "On-Demand Architecture" and updated description to: "SensorsOff operates through the Android Quick Settings Tile and Shizuku without a permanent background service."
+3. **`app/build.gradle.kts`**:
+   - Bumped `versionCode` to 35 and `versionName` to "2.7.8".
+
+#### Telemetry & Verification
+- `SensorsOffBackgroundService`: 0 references across executable code.
+- `startForeground(`: 0 references across executable code.
+- `FOREGROUND_SERVICE` and `FOREGROUND_SERVICE_SPECIAL_USE`: 0 in `AndroidManifest.xml`.
+- `POST_NOTIFICATIONS`: 0 in `AndroidManifest.xml`.
+- `SensorsOffTileService`, `BootCompletedReceiver`, and `ShizukuManager` verified intact.
+
+---
+
 ## [2.7.7] - 2026-09-20
 
 ### Complete Purge of Obsolete Keep-Alive UI and Preference Infrastructure
