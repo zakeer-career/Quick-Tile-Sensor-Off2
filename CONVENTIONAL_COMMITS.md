@@ -11,31 +11,70 @@ Each commit entry includes:
 
 ---
 
-### [v2.8.0] - 2026-09-20
+### [v2.8.2] - 2026-09-22
 
 ```git
-release(v2.8.0): bump application version to 2.8.0 with architecture hardening and zero-daemon lifecycle
+refactor(binder): implement strict API-version-specific Binder transaction resolution
 
 Problem:
-1. Application version required bump to 2.8.0 (versionCode 37) to align distribution metadata with completed architecture hardening.
-2. Direct non-authoritative Settings table writes required purge, and root auto-start routines needed full elimination.
+1. SensorPrivacyCodes previously attempted multiple fallback transaction codes across different Android versions in a loop.
+2. Iterating through multi-version lists risked sending mismatched Parcel arguments across different Android releases and OEM ROMs.
+3. Documentation needed precise alignment regarding minSdk = 24 vs Android 10+ (API 29+) hardware sensor privacy requirements.
 
 Root Cause:
-1. Version promotion to 2.8.0 reflecting zero-daemon on-demand lifecycle conformance, typed shell execution, and authoritative tri-state verification.
+1. In AOSP ISensorPrivacyManager.aidl, method indices are strictly defined per API level: API 31+ (set=9, get=6), API 30 (set=5, get=4), API 29 (set=4, get=3). Prior to API 29, the subsystem did not exist. Guessing or blind iteration across versions is unsafe.
 
 Changes:
-- app/build.gradle.kts:
-  * Updated versionCode = 37, versionName = "2.8.0".
-- MainActivity.kt:
-  * Updated UI What's New header to WHAT'S NEW IN V2.8.0.
+- app/src/main/java/com/example/ShizukuManager.kt:
+  * Replaced blind fallback code arrays with getSetGlobalCodeForSdk(sdkInt) and getQueryGlobalCodeForSdk(sdkInt).
+  * Refactored invokeDirectSensorPrivacyTransact to send deterministic, single-transaction Binder IPC.
+  * Refactored queryDirectSensorPrivacy to query the exact API-level transaction code.
+  * Refactored shell fallback in setSensorsOffState to target only the version-specific code.
+- app/src/test/java/com/example/ExampleRobolectricTest.kt:
+  * Added unit tests verifying SDK-level transaction resolution and graceful null handling on unsupported API levels (<29).
 - README.md:
-  * Updated release badge to v2.8.0.
-- Documentation:
-  * Synchronized CHANGELOG.md, CONVENTIONAL_COMMITS.md, and PROBLEM_ANALYSIS_ROOT_CAUSE.md for v2.8.0.
+  * Clarified minSdk = 24 installation compatibility vs API 29+ hardware subsystem requirements.
 
 Verification:
-- Local Robolectric and instrumentation tests passed 100% (24/24 unit tests green).
-- Clean compilation and build via compile_applet and gradle assembleDebug.
+- gradle :app:testDebugUnitTest passed (40 unit tests successful).
+- Applet compilation succeeded with zero errors.
+```
+
+---
+
+### [v2.8.1] - 2026-09-22
+
+```git
+release(version): promote to v2.8.1 with global sensor privacy isolation and verification
+
+Problem:
+1. getSensorsOffState previously used individual camera and microphone sensor privacy states to infer global sensor privacy.
+2. invokeDirectSensorPrivacyTransact fell back to granular camera/mic toggles upon global transaction failure, silently converting global operations to partial toggles.
+3. UNKNOWN sensor states could be inadvertently conflated with inactive state.
+
+Root Cause:
+1. Android sensor privacy maintains separate global and per-sensor privacy states in ISensorPrivacyManager. Inferring global state from per-sensor states violates state isolation and creates false verification results.
+
+Changes:
+- ShizukuManager.kt:
+  * Refactored getSensorsOffState to query only global Binder transact codes and native global SensorPrivacyManager methods.
+  * Removed per-sensor fallback in invokeDirectSensorPrivacyTransact.
+  * Decoupled getIndividualSensorState from global sensor queries.
+  * Updated setSensorsOffState to store only verified global preference without touching granular sensor prefs.
+  * Cleaned stale comments referencing Compatibility Settings synchronization.
+- README.md:
+  * Updated architecture diagram and permission setup to remove legacy WRITE_SECURE_SETTINGS and Settings synchronization.
+- SensorsOffTileService.kt:
+  * Explicitly mapped SensorPrivacyState.UNKNOWN to Tile.STATE_UNAVAILABLE.
+  * Updated tile diagnostic logging to report failure when verification does not match target.
+- SensorViewModel.kt:
+  * Updated sensor item mapping to query individual sensor state independently.
+- ExampleRobolectricTest.kt:
+  * Added 13 dedicated unit test cases covering global read-back verification, UNKNOWN isolation, cam/mic independence, and Settings/SharedPreferences isolation.
+
+Verification:
+- gradle :app:testDebugUnitTest executed with 38/38 tests passing.
+- gradle :app:assembleDebug succeeded without errors.
 ```
 
 ---

@@ -6,33 +6,88 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
-## [2.8.0] - 2026-09-20
+## [2.8.2] - 2026-09-22
 
-### Production Release: Version Bump & Comprehensive Architecture Hardening
+### Targeted Fix: Strict API-Version-Specific Binder Transactions & Documentation Alignment
 
 #### Problem Analysis
-- **Version Lifecycle & Distribution Alignment**:
-  - Application required version promotion from v2.7.9 (`versionCode 36`) to v2.8.0 (`versionCode 37`) to align with finalized architecture hardening, root auto-start elimination, settings synchronization write purges, and typed shell command encapsulation.
-- **Verification Integrity**:
-  - Full test suite across state machines, serialization, and Robolectric/instrumentation fixtures required validation against the 2.8.0 build target.
+- **Blind Transaction Code Iteration Elimination**:
+  - `SensorPrivacyCodes.getAllSetGlobalCodes()` and `getAllQueryGlobalCodes()` previously iterated through a list of historical transaction codes (9, 5, 4 and 6, 4, 3) across different Android versions.
+  - Calling arbitrary transaction numbers with potentially incompatible Parcel signatures could cause unintended behavior or IPC rejections on specific OEM ROMs.
+- **Strict API-Level Transaction Resolution**:
+  - AOSP `ISensorPrivacyManager.aidl` maps transactions deterministically:
+    * Android 12+ (API 31+): `setSensorPrivacy` = 9 (`writeInterfaceToken`, `writeInt`), `isSensorPrivacyEnabled` = 6 (`writeInterfaceToken` -> `readInt() != 0`).
+    * Android 11 (API 30): `setSensorPrivacy` = 5 (`writeInterfaceToken`, `writeInt`), `isSensorPrivacyEnabled` = 4 (`writeInterfaceToken` -> `readInt() != 0`).
+    * Android 10 (API 29): `setSensorPrivacy` = 4 (`writeInterfaceToken`, `writeInt`), `isSensorPrivacyEnabled` = 3 (`writeInterfaceToken` -> `readInt() != 0`).
+    * Android < 29: Unsupported (`ISensorPrivacyManager` did not exist in AOSP prior to Android 10).
+  - Unsupported or unidentifiable API versions immediately return `BinderTransactionResult.UNSUPPORTED` and `SensorPrivacyState.UNKNOWN` without guessing or iterating.
+- **Documentation Accuracy (`minSdk = 24` vs `API 29+`)**:
+  - Clarified that `minSdk = 24` allows installation and local telemetry/diagnostics on Android 7.0+, while elevated `ISensorPrivacyManager` hardware control strictly requires Android 10+ (API 29+).
 
 #### Root Cause
-- Routine semantic version promotion reflecting the completed hardening pass, zero-daemon lifecycle conformance, and strict authoritative tri-state sensor privacy verification model.
+- Android's AIDL transaction code indices are version-dependent. Iterating through multi-version lists risked sending mismatched Parcel arguments to unexpected AIDL methods on modern Android platforms.
 
 #### Code Changes
-1. **`app/build.gradle.kts`**:
-   - Updated `versionCode = 37` and `versionName = "2.8.0"`.
-2. **`app/src/main/java/com/example/MainActivity.kt`**:
-   - Updated UI changelog header to `"WHAT'S NEW IN V2.8.0"`.
-3. **`README.md`**:
-   - Updated release badge to `v2.8.0`.
-4. **`CHANGELOG.md`, `CONVENTIONAL_COMMITS.md`, `PROBLEM_ANALYSIS_ROOT_CAUSE.md`**:
-   - Documented v2.8.0 release notes, problem analysis, root cause, and verification telemetry.
+- `app/src/main/java/com/example/ShizukuManager.kt`:
+  - Implemented `getSetGlobalCodeForSdk(sdkInt)` and `getQueryGlobalCodeForSdk(sdkInt)` resolving exact transaction codes by SDK level.
+  - Refactored `invokeDirectSensorPrivacyTransact()` and `queryDirectSensorPrivacy()` to execute single, version-deterministic Binder transactions.
+  - Refactored `setSensorsOffState()` shell fallback to target only the version-specific transaction code.
+- `app/src/test/java/com/example/ExampleRobolectricTest.kt`:
+  - Added unit tests verifying API-version-specific transaction code selection and graceful `null`/`UNKNOWN` handling for API < 29.
+- `README.md`:
+  - Documented Android version compatibility (`minSdk = 24` vs `API 29+`).
 
 #### Telemetry & Verification
-- Unit test suite: 100% passing across all 35 tests (`gradle :app:testDebugUnitTest`).
-- Android Debug APK Build: `gradle :app:assembleDebug` completed successfully with zero warnings or errors.
-- Package ID verified strictly as `com.SensorsOff`.
+- Unit tests: 40/40 passed successfully.
+- Compilation: Build succeeded.
+
+---
+
+## [2.8.1] - 2026-09-22
+
+### Production Release: Global Sensor Privacy Isolation, Authoritative Verification & Version 2.8.1 Promotion
+
+#### Problem Analysis
+- **Global Sensor Privacy State Isolation**:
+  - Global "Sensors Off" state was previously querying camera and microphone privacy states as fallback heuristics.
+  - Treating Camera + Microphone being disabled as proof that the GLOBAL sensor privacy state was disabled violated state isolation invariants.
+  - Direct Binder transactions and state queries needed to be strictly separated: global operations inspect and toggle global sensor privacy exclusively, and individual camera/mic operations inspect and toggle camera/mic sensor privacy exclusively without cross-pollution.
+- **Authoritative Verification & Fallback Elimination**:
+  - `invokeDirectSensorPrivacyTransact` previously fell back to looping over individual camera/mic sensor toggles upon global transaction failure, silently converting a global request into partial toggles.
+  - `getSensorsOffState` and `updateTileState` now treat `UNKNOWN` states strictly as unauthoritative/unavailable rather than assuming active or inactive state.
+- **WRITE_SECURE_SETTINGS Backend Removal**:
+  - Settings synchronization was intentionally deprecated and removed. Treating `WRITE_SECURE_SETTINGS` as a standalone sensor-control backend falsely implied the app could toggle hardware sensor privacy without Shizuku or Root.
+  - Auto-grant routines (`autoGrantSecureSettings`, `executeTypedGrantSecureSettings`) and adb grant guidance in UI/code were completely excised.
+- **Privileged Backend Clarity**:
+  - The only genuine privileged sensor-control backends on modern Android are Shizuku IPC and Root SU.
+- **Version Lifecycle & Distribution Alignment**:
+  - Promoted app to v2.8.0 (`versionCode 37`) with package ID preserved strictly as `com.SensorsOff`.
+
+#### Root Cause
+- `ISensorPrivacyManager` maintains distinct internal state trackers: a global sensor privacy boolean affecting all hardware sensors, and granular individual sensor privacy toggles (`SENSOR_MICROPHONE = 1`, `SENSOR_CAMERA = 2`). Inferring global sensor privacy from individual sensor states caused false positives/negatives when individual sensor toggles were in divergent states.
+
+#### Code Changes
+1. **`app/src/main/java/com/example/ShizukuManager.kt`**:
+   - Refactored `getSensorsOffState()` to query only direct global Parcel Binder transact and native `SensorPrivacyManager` global reflection methods (`isSensorPrivacyEnabled()`, `isAllSensorPrivacyEnabled()`), eliminating all camera/mic fallback inferences.
+   - Refactored `invokeDirectSensorPrivacyTransact()` to remove the granular camera/mic toggle fallback loop, returning transaction error states directly if global transactions are rejected.
+   - Decoupled `getIndividualSensorState()` from global state queries.
+   - Cleaned `setSensorsOffState()` SharedPreferences updates to record only global `sensors_off_enabled` state for UI display without faking individual sensor entries.
+   - Cleaned stale comments referencing "Compatibility Settings synchronization".
+2. **`README.md`**:
+   - Updated system architecture diagram to remove WRITE_SECURE_SETTINGS and Settings synchronization.
+   - Updated capabilities and setup sections to document pure Shizuku AIDL Binder IPC and direct Root (su) fallback with zero-daemon architecture.
+3. **`app/src/main/java/com/example/SensorsOffTileService.kt`**:
+   - Mapped `SensorPrivacyState.UNKNOWN` explicitly to `Tile.STATE_UNAVAILABLE` with `"Unavailable"` subtitle.
+   - Updated tile diagnostic logs to report `"Toggle Failed"` when state verification does not match requested target.
+4. **`app/src/main/java/com/example/SensorViewModel.kt`**:
+   - Updated `SensorViewModel` sensor item mapping to query individual sensor state without binding to global state.
+5. **`app/src/test/java/com/example/ExampleRobolectricTest.kt`**:
+   - Added comprehensive test suite verifying the 13 core global state verification requirements (read-back success/failure, UNKNOWN isolation, cam/mic independence, SharedPreferences/Settings isolation, and Binder failure handling).
+
+#### Telemetry & Verification
+- 38 Robolectric unit tests passed (`gradle :app:testDebugUnitTest`).
+- Debug APK assembled successfully with zero compiler warnings (`gradle :app:assembleDebug`).
+- Verified `applicationId` preserved as `com.SensorsOff`.
 
 ---
 

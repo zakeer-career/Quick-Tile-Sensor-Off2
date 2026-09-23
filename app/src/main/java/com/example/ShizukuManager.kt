@@ -44,41 +44,52 @@ data class CommandResult(
 /**
  * Centralized Binder Transaction Codes for android.hardware.ISensorPrivacyManager.
  *
- * Compatibility & Architecture Note:
- * - These are internal Android sensor privacy service transaction mappings and may vary by Android version/OEM.
- * - Transaction codes correspond directly to method declarations in ISensorPrivacyManager.aidl across AOSP versions:
+ * Architecture & Compatibility Notice:
+ * - These transaction codes correspond directly to method declarations in android.hardware.ISensorPrivacyManager.aidl across AOSP versions:
  *   * Android 12+ (API 31+): setSensorPrivacy is code 9, setToggleSensorPrivacy is code 10,
  *     isToggleSensorPrivacyEnabled is code 8, isCombinedToggleSensorPrivacyEnabled is code 7,
  *     isSensorPrivacyEnabled is code 6.
  *   * Android 11 (API 30): setSensorPrivacy is code 5, isSensorPrivacyEnabled is code 4.
  *   * Android 10 (API 29): setSensorPrivacy is code 4, isSensorPrivacyEnabled is code 3.
  *
- * OEM Divergence & Fallback Behavior:
- * - Certain OEM ROMs (e.g., Xiaomi HyperOS/MIUI, Samsung OneUI, Transsion HiOS) may re-order internal AIDL methods.
- * - Because internal Binder transaction numbers may vary on modified vendor trees:
- *   1. We attempt the version-preferred transaction code first.
- *   2. If a RemoteException or failure occurs, we iterate across documented alternate version codes only.
- *   3. If direct Binder IPC fails, we fall back to privileged shell commands ('service call sensor_privacy <code...>').
- *   4. Critical: Operations are ONLY considered successful if an authoritative read-back of the Android sensor privacy service
- *      matches the requested target state. A successful Binder transaction does NOT prove hardware state change.
+ * Internal Android/OEM Interface Notice:
+ * - ISensorPrivacyManager is an internal, non-SDK Android system service interface.
+ * - AIDL transaction codes and method signatures are internal to Android and OEM-dependent.
+ * - They are not guaranteed to be identical across every OEM vendor ROM (e.g., Xiaomi HyperOS/MIUI, Samsung OneUI, Transsion HiOS).
+ * - The application does not claim universal compatibility.
+ * - A successful Binder IPC or shell transaction alone does NOT prove state change.
+ * - Operations are ONLY considered successful if an authoritative read-back of the GLOBAL sensor privacy state matches the requested state.
  */
 object SensorPrivacyTransactions {
     const val DESCRIPTOR = "android.hardware.ISensorPrivacyManager"
 
-    // Setters
-    const val SET_GLOBAL_PRIVACY_S_PLUS = 9       // Android 12+ (API 31+)
-    const val SET_GLOBAL_PRIVACY_R = 5            // Android 11 (API 30)
-    const val SET_GLOBAL_PRIVACY_Q = 4            // Android 10 (API 29)
-    const val SET_TOGGLE_PRIVACY = 10             // Android 12+: setToggleSensorPrivacy(int userId, int source, int sensor, boolean enable)
+    // Android 12+ (API 31+) ISensorPrivacyManager.aidl
+    // void setSensorPrivacy(boolean enable) -> code 9
+    // boolean isSensorPrivacyEnabled() -> code 6
+    const val SET_GLOBAL_PRIVACY_S_PLUS = 9
+    const val IS_GLOBAL_PRIVACY_S_PLUS = 6
 
-    // Getters
-    const val IS_GLOBAL_PRIVACY_S_PLUS = 6        // Android 12+: boolean isSensorPrivacyEnabled()
-    const val IS_GLOBAL_PRIVACY_R = 4             // Android 11
-    const val IS_GLOBAL_PRIVACY_Q = 3             // Android 10
-    const val IS_TOGGLE_PRIVACY = 8               // Android 12+: boolean isToggleSensorPrivacyEnabled(int toggleType, int sensor)
-    const val IS_COMBINED_TOGGLE_PRIVACY = 7      // Android 12 fallback: boolean isCombinedToggleSensorPrivacyEnabled(int sensor)
+    // Android 11 (API 30) ISensorPrivacyManager.aidl
+    // void setSensorPrivacy(boolean enable) -> code 5
+    // boolean isSensorPrivacyEnabled() -> code 4
+    const val SET_GLOBAL_PRIVACY_R = 5
+    const val IS_GLOBAL_PRIVACY_R = 4
 
-    // Sensors
+    // Android 10 (API 29) ISensorPrivacyManager.aidl
+    // void setSensorPrivacy(boolean enable) -> code 4
+    // boolean isSensorPrivacyEnabled() -> code 3
+    const val SET_GLOBAL_PRIVACY_Q = 4
+    const val IS_GLOBAL_PRIVACY_Q = 3
+
+    // Android 12+ (API 31+) Individual Sensor Toggles (kept strictly separate from global operations)
+    // void setToggleSensorPrivacy(int userId, int source, int sensor, boolean enable) -> code 10
+    // boolean isToggleSensorPrivacyEnabled(int toggleType, int sensor) -> code 8
+    // boolean isCombinedToggleSensorPrivacyEnabled(int sensor) -> code 7
+    const val SET_TOGGLE_PRIVACY = 10
+    const val IS_TOGGLE_PRIVACY = 8
+    const val IS_COMBINED_TOGGLE_PRIVACY = 7
+
+    // Sensor Constants
     const val SENSOR_MICROPHONE = 1
     const val SENSOR_CAMERA = 2
 
@@ -86,22 +97,32 @@ object SensorPrivacyTransactions {
     const val TOGGLE_TYPE_SOFTWARE = 1
     const val SOURCE_QS_TILE = 1
 
-    fun getPreferredSetGlobalCode(): Int = when {
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> SET_GLOBAL_PRIVACY_S_PLUS
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R -> SET_GLOBAL_PRIVACY_R
-        else -> SET_GLOBAL_PRIVACY_Q
+    /**
+     * Resolves the exact ISensorPrivacyManager transaction code for setSensorPrivacy(boolean)
+     * strictly based on the device's Android API level.
+     * Returns null if the Android version is unsupported (API < 29).
+     */
+    fun getSetGlobalCodeForSdk(sdkInt: Int = Build.VERSION.SDK_INT): Int? = when {
+        sdkInt >= Build.VERSION_CODES.S -> SET_GLOBAL_PRIVACY_S_PLUS // API 31+ (Android 12, 13, 14, 15, 16)
+        sdkInt == Build.VERSION_CODES.R -> SET_GLOBAL_PRIVACY_R      // API 30 (Android 11)
+        sdkInt == Build.VERSION_CODES.Q -> SET_GLOBAL_PRIVACY_Q      // API 29 (Android 10)
+        else -> null                                                // API < 29: ISensorPrivacyManager did not exist in AOSP
     }
 
-    fun getAllSetGlobalCodes(): IntArray {
-        val preferred = getPreferredSetGlobalCode()
-        return intArrayOf(preferred, SET_GLOBAL_PRIVACY_S_PLUS, SET_GLOBAL_PRIVACY_R, SET_GLOBAL_PRIVACY_Q).distinct().toIntArray()
+    /**
+     * Resolves the exact ISensorPrivacyManager transaction code for isSensorPrivacyEnabled()
+     * strictly based on the device's Android API level.
+     * Returns null if the Android version is unsupported (API < 29).
+     */
+    fun getQueryGlobalCodeForSdk(sdkInt: Int = Build.VERSION.SDK_INT): Int? = when {
+        sdkInt >= Build.VERSION_CODES.S -> IS_GLOBAL_PRIVACY_S_PLUS // API 31+ (Android 12, 13, 14, 15, 16)
+        sdkInt == Build.VERSION_CODES.R -> IS_GLOBAL_PRIVACY_R      // API 30 (Android 11)
+        sdkInt == Build.VERSION_CODES.Q -> IS_GLOBAL_PRIVACY_Q      // API 29 (Android 10)
+        else -> null                                                // API < 29: ISensorPrivacyManager did not exist in AOSP
     }
 
-    fun getAllQueryGlobalCodes(): IntArray = intArrayOf(
-        IS_GLOBAL_PRIVACY_S_PLUS,
-        IS_GLOBAL_PRIVACY_R,
-        IS_GLOBAL_PRIVACY_Q
-    )
+    fun getPreferredSetGlobalCode(): Int =
+        getSetGlobalCodeForSdk() ?: SET_GLOBAL_PRIVACY_S_PLUS
 }
 
 /**
@@ -152,12 +173,11 @@ object ShizukuManager {
                     delay(100)
                     count++
                 }
-                autoGrantSecureSettings(ctx)
                 notifyTileServiceToUpdate(ctx)
                 TileLogManager.logPrivilegeEvent(
                     ctx,
-                    "Shizuku Setup Complete",
-                    "Shizuku setup completed fully. Tile auto-updated to operational state.",
+                    "Shizuku Connected",
+                    "Shizuku binder connected; tile state refresh requested.",
                     LogLevel.SUCCESS
                 )
             }
@@ -178,7 +198,6 @@ object ShizukuManager {
         if (grantResult == PackageManager.PERMISSION_GRANTED) {
             Log.i(TAG, "Shizuku permission granted. Notifying tile and services.")
             appContextRef?.get()?.let { ctx ->
-                autoGrantSecureSettings(ctx)
                 notifyTileServiceToUpdate(ctx)
                 TileLogManager.logPrivilegeEvent(
                     ctx,
@@ -363,34 +382,40 @@ object ShizukuManager {
 
     /**
      * Direct Parcel Binder query for global sensor privacy state.
-     * Note: Uses the Android sensor privacy system service through Binder.
-     * This relies on internal service behavior that may vary by Android version/OEM.
+     * Uses strict API-version-specific transaction code:
+     * - Android 12+ (API 31+): Code 6 (isSensorPrivacyEnabled())
+     * - Android 11 (API 30): Code 4 (isSensorPrivacyEnabled())
+     * - Android 10 (API 29): Code 3 (isSensorPrivacyEnabled())
+     * - Android <29: Unsupported (returns UNKNOWN)
      */
     fun queryDirectSensorPrivacy(): SensorPrivacyState {
+        val txCode = SensorPrivacyCodes.getQueryGlobalCodeForSdk() ?: return SensorPrivacyState.UNKNOWN
         val wrapper = getSensorPrivacyBinder() ?: return SensorPrivacyState.UNKNOWN
-        for (code in SensorPrivacyCodes.getAllQueryGlobalCodes()) {
-            val data = Parcel.obtain()
-            val reply = Parcel.obtain()
-            try {
-                data.writeInterfaceToken(SensorPrivacyCodes.DESCRIPTOR)
-                val res = wrapper.transact(code, data, reply, 0)
-                if (res) {
-                    reply.readException()
-                    val isEnabled = reply.readInt() != 0
-                    return if (isEnabled) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED
-                }
-            } catch (e: RemoteException) {
-                Log.d(TAG, "RemoteException querying code $code: ${e.message}")
-            } catch (e: SecurityException) {
-                Log.d(TAG, "SecurityException querying code $code: ${e.message}")
-            } catch (t: Exception) {
-                Log.d(TAG, "Exception querying code $code: ${t.message}")
-            } finally {
-                data.recycle()
-                reply.recycle()
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        return try {
+            data.writeInterfaceToken(SensorPrivacyCodes.DESCRIPTOR)
+            val res = wrapper.transact(txCode, data, reply, 0)
+            if (res) {
+                reply.readException()
+                val isEnabled = reply.readInt() != 0
+                if (isEnabled) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED
+            } else {
+                SensorPrivacyState.UNKNOWN
             }
+        } catch (e: RemoteException) {
+            Log.d(TAG, "RemoteException querying global sensor privacy code $txCode: ${e.message}")
+            SensorPrivacyState.UNKNOWN
+        } catch (e: SecurityException) {
+            Log.d(TAG, "SecurityException querying global sensor privacy code $txCode: ${e.message}")
+            SensorPrivacyState.UNKNOWN
+        } catch (t: Exception) {
+            Log.d(TAG, "Exception querying global sensor privacy code $txCode: ${t.message}")
+            SensorPrivacyState.UNKNOWN
+        } finally {
+            data.recycle()
+            reply.recycle()
         }
-        return SensorPrivacyState.UNKNOWN
     }
 
     /**
@@ -518,50 +543,12 @@ object ShizukuManager {
         }
     }
 
-    fun hasSecureSettingsPermission(context: Context): Boolean {
-        return context.checkSelfPermission(android.Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
-    }
-
-    private val isAutoGranting = AtomicBoolean(false)
-
-    /**
-     * Attempts to auto-grant WRITE_SECURE_SETTINGS permission via Shizuku in the background.
-     * Deduplicated with AtomicBoolean to prevent parallel process storms.
-     */
-    fun autoGrantSecureSettings(context: Context) {
-        if (hasSecureSettingsPermission(context)) return
-        if (!isShizukuRunning() || !isShizukuAuthorized()) return
-        if (!isAutoGranting.compareAndSet(false, true)) return
-        CoroutineScope(Dispatchers.IO).launch {
-            try {
-                executeTypedGrantSecureSettings(context)
-                if (hasSecureSettingsPermission(context)) {
-                    Log.i(TAG, "Successfully auto-granted WRITE_SECURE_SETTINGS via Shizuku")
-                    TileLogManager.logPrivilegeEvent(
-                        context,
-                        "WRITE_SECURE_SETTINGS Granted",
-                        "App acquired WRITE_SECURE_SETTINGS via Shizuku! Fast direct settings operations enabled.",
-                        LogLevel.SUCCESS
-                    )
-                }
-            } catch (e: SecurityException) {
-                Log.d(TAG, "SecurityException auto-granting WRITE_SECURE_SETTINGS: ${e.message}")
-            } catch (e: Exception) {
-                Log.d(TAG, "Auto-grant WRITE_SECURE_SETTINGS note: ${e.message}")
-            } finally {
-                isAutoGranting.set(false)
-            }
-        }
-    }
-
     /**
      * Checks if any viable privilege is available to toggle sensor privacy.
-     * True if WRITE_SECURE_SETTINGS is granted, Shizuku is authorized, or Root SU is available.
+     * True if Shizuku is authorized or Root SU is available.
      */
-    fun isPrivilegeAvailable(context: Context): Boolean {
-        if (hasSecureSettingsPermission(context)) return true
+    fun isPrivilegeAvailable(context: Context? = null): Boolean {
         if (isShizukuRunning() && isShizukuAuthorized()) {
-            autoGrantSecureSettings(context)
             return true
         }
         return isRootAvailable()
@@ -583,93 +570,56 @@ object ShizukuManager {
         }
     }
 
-    fun getAdbGrantCommand(context: Context): String {
-        return "adb shell pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS"
-    }
-
     /**
-     * Executes direct low-level Binder transact calls across Shizuku IPC using known AIDL codes.
+     * Executes direct low-level Binder transact calls across Shizuku IPC using strict AIDL codes.
+     * Uses the exact API-version-specific transaction code:
+     * - Android 12+ (API 31+): Code 9 (setSensorPrivacy(boolean))
+     * - Android 11 (API 30): Code 5 (setSensorPrivacy(boolean))
+     * - Android 10 (API 29): Code 4 (setSensorPrivacy(boolean))
+     * - Android <29: Unsupported (returns UNSUPPORTED)
+     *
      * Important: A successful transaction (TRANSACTION_ACCEPTED) only means the Binder IPC call
      * was accepted by the remote sensor_privacy service. It does NOT guarantee the hardware state changed.
      * Authoritative read-back verification against the real sensor state is always performed afterward.
-     * Note: These are internal Android sensor privacy service transaction mappings and may vary by Android version/OEM.
      */
     fun invokeDirectSensorPrivacyTransact(turnOff: Boolean): BinderTransactionResult {
+        val txCode = SensorPrivacyCodes.getSetGlobalCodeForSdk() ?: return BinderTransactionResult.UNSUPPORTED
         val wrapper = getSensorPrivacyBinder() ?: return BinderTransactionResult.BINDER_ERROR
         val targetVal = if (turnOff) 1 else 0
 
-        // 1. Direct low-level Parcel Binder transact for global sensor privacy across known codes:
-        val txCodes = SensorPrivacyCodes.getAllSetGlobalCodes()
-        var lastErrorResult = BinderTransactionResult.UNSUPPORTED
-
-        for (txCode in txCodes) {
-            val data = Parcel.obtain()
-            val reply = Parcel.obtain()
-            try {
-                data.writeInterfaceToken(SensorPrivacyCodes.DESCRIPTOR)
-                data.writeInt(targetVal)
-                val res = wrapper.transact(txCode, data, reply, 0)
-                if (res) {
-                    try {
-                        reply.readException()
-                        Log.d(TAG, "Direct Binder transact code $txCode accepted by sensor_privacy service")
-                        return BinderTransactionResult.TRANSACTION_ACCEPTED
-                    } catch (e: SecurityException) {
-                        Log.w(TAG, "Direct Binder code $txCode security exception: ${e.message}")
-                        lastErrorResult = BinderTransactionResult.EXCEPTION
-                    } catch (e: RemoteException) {
-                        Log.w(TAG, "Direct Binder code $txCode remote exception: ${e.message}")
-                        lastErrorResult = BinderTransactionResult.EXCEPTION
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Direct Binder code $txCode exception: ${e.message}")
-                        lastErrorResult = BinderTransactionResult.EXCEPTION
-                    }
-                } else {
-                    lastErrorResult = BinderTransactionResult.TRANSACTION_ERROR
-                }
-            } catch (e: RemoteException) {
-                Log.w(TAG, "RemoteException invoking code $txCode: ${e.message}")
-                lastErrorResult = BinderTransactionResult.EXCEPTION
-            } catch (t: Exception) {
-                Log.w(TAG, "Exception invoking code $txCode: ${t.message}")
-                lastErrorResult = BinderTransactionResult.EXCEPTION
-            } finally {
-                data.recycle()
-                reply.recycle()
-            }
-        }
-
-        // 2. Known fallback: Granular Mic (1) and Camera (2) toggle via transaction code 10:
-        // void setToggleSensorPrivacy(int userId, int source, int sensor, boolean enable)
-        val currentUserId = getCurrentUserId()
-        var granularAcceptedCount = 0
-        for (sensor in intArrayOf(SensorPrivacyCodes.SENSOR_MICROPHONE, SensorPrivacyCodes.SENSOR_CAMERA)) {
-            val data = Parcel.obtain()
-            val reply = Parcel.obtain()
-            try {
-                data.writeInterfaceToken(SensorPrivacyCodes.DESCRIPTOR)
-                data.writeInt(currentUserId)
-                data.writeInt(SensorPrivacyCodes.SOURCE_QS_TILE)
-                data.writeInt(sensor)
-                data.writeInt(targetVal)
-                if (wrapper.transact(SensorPrivacyCodes.SET_TOGGLE_PRIVACY, data, reply, 0)) {
+        val data = Parcel.obtain()
+        val reply = Parcel.obtain()
+        return try {
+            data.writeInterfaceToken(SensorPrivacyCodes.DESCRIPTOR)
+            data.writeInt(targetVal)
+            val res = wrapper.transact(txCode, data, reply, 0)
+            if (res) {
+                try {
                     reply.readException()
-                    granularAcceptedCount++
+                    Log.d(TAG, "Direct Binder transact code $txCode accepted by sensor_privacy service")
+                    BinderTransactionResult.TRANSACTION_ACCEPTED
+                } catch (e: SecurityException) {
+                    Log.w(TAG, "Direct Binder code $txCode security exception: ${e.message}")
+                    BinderTransactionResult.EXCEPTION
+                } catch (e: RemoteException) {
+                    Log.w(TAG, "Direct Binder code $txCode remote exception: ${e.message}")
+                    BinderTransactionResult.EXCEPTION
+                } catch (e: Exception) {
+                    Log.w(TAG, "Direct Binder code $txCode exception: ${e.message}")
+                    BinderTransactionResult.EXCEPTION
                 }
-            } catch (e: RemoteException) {
-                Log.w(TAG, "RemoteException in granular toggle for sensor $sensor: ${e.message}")
-            } catch (t: Exception) {
-                Log.w(TAG, "Exception in granular toggle for sensor $sensor: ${t.message}")
-            } finally {
-                data.recycle()
-                reply.recycle()
+            } else {
+                BinderTransactionResult.TRANSACTION_ERROR
             }
-        }
-
-        return if (granularAcceptedCount == 2) {
-            BinderTransactionResult.TRANSACTION_ACCEPTED
-        } else {
-            lastErrorResult
+        } catch (e: RemoteException) {
+            Log.w(TAG, "RemoteException invoking code $txCode: ${e.message}")
+            BinderTransactionResult.EXCEPTION
+        } catch (t: Exception) {
+            Log.w(TAG, "Exception invoking code $txCode: ${t.message}")
+            BinderTransactionResult.EXCEPTION
+        } finally {
+            data.recycle()
+            reply.recycle()
         }
     }
 
@@ -726,8 +676,7 @@ object ShizukuManager {
      * 1. Direct AIDL Binder Transact via Shizuku (with explicit transaction outcome)
      * 2. Lean native shell command fallback using documented transaction codes
      * 3. Authoritative read-back verification against the Android sensor privacy service
-     * 4. Compatibility Settings synchronization (never treated as authoritative state)
-     * 5. SharedPreferences persistence
+     * 4. UI/diagnostic SharedPreferences persistence for verified states
      */
     fun setSensorsOffState(context: Context, turnOff: Boolean, skipNotify: Boolean = false): Boolean {
         stateOperationLock.lock()
@@ -754,13 +703,13 @@ object ShizukuManager {
 
             // 2. Shell command fallback if direct Binder transact did not result in verified state
             if (!directVerified) {
-                val txCodes = SensorPrivacyCodes.getAllSetGlobalCodes()
-                for (txCode in txCodes) {
+                val txCode = SensorPrivacyCodes.getSetGlobalCodeForSdk()
+                if (txCode != null) {
                     val res = executeTypedShellToggleGlobal(txCode, turnOff)
                     if (res.success) {
                         val stateAfterCmd = getSensorsOffState(context)
                         if (stateAfterCmd.matchesRequested(turnOff)) {
-                            break
+                            directVerified = true
                         }
                     }
                 }
@@ -783,16 +732,10 @@ object ShizukuManager {
                 return false
             }
 
-            // 4. Update local SharedPreferences with confirmed state
+            // 4. Update local SharedPreferences with confirmed state for UI/history only
             val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
             prefs.edit()
                 .putBoolean("sensors_off_enabled", turnOff)
-                .putBoolean("sensor_blocked_camera", turnOff)
-                .putBoolean("sensor_blocked_mic", turnOff)
-                .putBoolean("sensor_blocked_motion", turnOff)
-                .putBoolean("sensor_blocked_gyro", turnOff)
-                .putBoolean("sensor_blocked_proximity", turnOff)
-                .putBoolean("sensor_blocked_light", turnOff)
                 .apply()
 
             if (!skipNotify) {
@@ -948,63 +891,50 @@ object ShizukuManager {
     }
 
     /**
-     * Authoritatively queries the current state for an individual sensor.
+     * Authoritatively queries the current state for an individual sensor (Camera, Mic).
      * Returns:
      * - ENABLED: Authoritatively verified that the sensor is off / blocked.
      * - DISABLED: Authoritatively verified that the sensor is on / available.
      * - UNKNOWN: Authoritative state could not be determined. UNKNOWN must never be interpreted as ENABLED or DISABLED.
+     *
+     * Invariants:
+     * - Camera queries camera state only.
+     * - Microphone queries microphone state only.
+     * - Global state is NOT mixed with individual sensor state.
      */
     fun getIndividualSensorState(
         context: Context,
-        sensorId: String,
-        knownGlobalState: SensorPrivacyState? = null
+        sensorId: String
     ): SensorPrivacyState {
-        // If all sensors are confirmed off globally, this sensor is off
-        val globalState = knownGlobalState ?: getSensorsOffState(context)
-        if (globalState == SensorPrivacyState.ENABLED) {
-            return SensorPrivacyState.ENABLED
-        }
-
-        // Layer 0: Direct Parcel Binder query via Shizuku
         val sensorCode = when (sensorId.lowercase()) {
             "camera" -> SensorPrivacyCodes.SENSOR_CAMERA
             "mic", "microphone" -> SensorPrivacyCodes.SENSOR_MICROPHONE
             else -> 0
         }
+
         if (sensorCode > 0) {
+            // Layer 0: Direct Parcel Binder query for individual toggle state via Shizuku
             val directQuery = queryDirectToggleSensorPrivacy(sensorCode)
             if (directQuery.isAuthoritative) {
                 return directQuery
             }
-        }
 
-        // Layer 1: Check native SensorPrivacyManager for camera / mic via reflection
-        try {
-            val spm = context.getSystemService("sensor_privacy")
-            if (spm != null) {
-                initSpmReflection(spm.javaClass)
-                val mSensor = cachedMethodSensorPrivacyInt
-                if (mSensor != null) {
-                    if (sensorId.equals("camera", ignoreCase = true)) {
-                        val cam = mSensor.invoke(spm, SensorPrivacyCodes.SENSOR_CAMERA) as? Boolean
-                        if (cam != null) {
-                            return if (cam) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED
-                        }
-                    } else if (sensorId.equals("mic", ignoreCase = true) || sensorId.equals("microphone", ignoreCase = true)) {
-                        val mic = mSensor.invoke(spm, SensorPrivacyCodes.SENSOR_MICROPHONE) as? Boolean
-                        if (mic != null) {
-                            return if (mic) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED
+            // Layer 1: Check native SensorPrivacyManager for camera / mic via reflection
+            try {
+                val spm = context.getSystemService("sensor_privacy")
+                if (spm != null) {
+                    initSpmReflection(spm.javaClass)
+                    val mSensor = cachedMethodSensorPrivacyInt
+                    if (mSensor != null) {
+                        val isBlocked = mSensor.invoke(spm, sensorCode) as? Boolean
+                        if (isBlocked != null) {
+                            return if (isBlocked) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED
                         }
                     }
                 }
+            } catch (e: Exception) {
+                Log.d(TAG, "SensorPrivacyManager reflection note for $sensorId: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.d(TAG, "SensorPrivacyManager reflection note for $sensorId: ${e.message}")
-        }
-
-        // If global state was authoritatively disabled and sensor is non-toggleable, return DISABLED
-        if (globalState == SensorPrivacyState.DISABLED && sensorCode == 0) {
-            return SensorPrivacyState.DISABLED
         }
 
         return SensorPrivacyState.UNKNOWN
@@ -1275,32 +1205,25 @@ object ShizukuManager {
     }
 
     /**
-     * Authoritatively queries the current SensorsOff state from the Android sensor privacy service.
+     * Authoritatively queries the current GLOBAL SensorsOff state from the Android sensor privacy service.
      * Returns:
-     * - ENABLED: Authoritatively verified that sensors are off / blocked.
-     * - DISABLED: Authoritatively verified that sensors are on / available.
-     * - UNKNOWN: Authoritative state could not be determined or verified. UNKNOWN must never be treated as ENABLED or DISABLED.
+     * - ENABLED: Authoritatively verified that GLOBAL sensor privacy is enabled (sensors off / blocked).
+     * - DISABLED: Authoritatively verified that GLOBAL sensor privacy is disabled (sensors on / accessible).
+     * - UNKNOWN: Authoritative global state could not be determined or verified. UNKNOWN must never be treated as ENABLED or DISABLED.
+     *
+     * Invariants:
+     * - Global state is determined exclusively from the actual global sensor privacy service/Binder API.
+     * - Camera and microphone states are NEVER used as proof of global sensor privacy state.
+     * - SharedPreferences, Settings.Global, and Settings.Secure are NEVER used to calculate authoritative global state.
      */
     fun getSensorsOffState(context: Context): SensorPrivacyState {
-        // Layer 0: Direct Parcel Binder query via Shizuku
+        // Layer 0: Direct Parcel Binder query for global sensor privacy via Shizuku
         val directGlobal = queryDirectSensorPrivacy()
-        if (directGlobal == SensorPrivacyState.ENABLED) return SensorPrivacyState.ENABLED
-
-        val camDirect = queryDirectToggleSensorPrivacy(SensorPrivacyCodes.SENSOR_CAMERA)
-        val micDirect = queryDirectToggleSensorPrivacy(SensorPrivacyCodes.SENSOR_MICROPHONE)
-        if (camDirect == SensorPrivacyState.ENABLED && micDirect == SensorPrivacyState.ENABLED) {
-            return SensorPrivacyState.ENABLED
-        }
-        if (directGlobal == SensorPrivacyState.DISABLED &&
-            (camDirect == SensorPrivacyState.DISABLED || camDirect == SensorPrivacyState.UNKNOWN) &&
-            (micDirect == SensorPrivacyState.DISABLED || micDirect == SensorPrivacyState.UNKNOWN)) {
-            return SensorPrivacyState.DISABLED
-        }
-        if (camDirect == SensorPrivacyState.DISABLED && micDirect == SensorPrivacyState.DISABLED) {
-            return SensorPrivacyState.DISABLED
+        if (directGlobal.isAuthoritative) {
+            return directGlobal
         }
 
-        // Layer 1: Check native Android SensorPrivacyManager directly via cached reflection
+        // Layer 1: Check native Android SensorPrivacyManager global state directly via cached reflection
         try {
             val spm = context.getSystemService("sensor_privacy")
             if (spm != null) {
@@ -1321,20 +1244,12 @@ object ShizukuManager {
                         return if (res) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED
                     }
                 }
-
-                // 3. isSensorPrivacyEnabled(int sensor) - 1: Mic, 2: Camera
-                cachedMethodSensorPrivacyInt?.let { m ->
-                    val mic = m.invoke(spm, SensorPrivacyCodes.SENSOR_MICROPHONE) as? Boolean
-                    val cam = m.invoke(spm, SensorPrivacyCodes.SENSOR_CAMERA) as? Boolean
-                    if (mic == true && cam == true) return SensorPrivacyState.ENABLED
-                    if (mic == false && cam == false) return SensorPrivacyState.DISABLED
-                }
             }
         } catch (e: Exception) {
             Log.d(TAG, "SensorPrivacyManager reflection check: ${e.message}")
         }
 
-        // Authoritative state could not be determined
+        // Authoritative global state could not be determined. UNKNOWN must remain UNKNOWN.
         return SensorPrivacyState.UNKNOWN
     }
 
@@ -1349,10 +1264,6 @@ object ShizukuManager {
     fun getCachedSensorsOffState(context: Context): Boolean = getCachedUiPreferenceState(context)
 
     // Typed Shell Execution Helpers
-    private fun executeTypedGrantSecureSettings(context: Context): CommandResult {
-        return executeShizukuInternalCommand("pm grant ${context.packageName} android.permission.WRITE_SECURE_SETTINGS")
-    }
-
     private fun executeTypedShellToggleGlobal(txCode: Int, turnOff: Boolean): CommandResult {
         val targetValue = if (turnOff) 1 else 0
         val cmd = "service call sensor_privacy $txCode i32 $targetValue"
@@ -1381,7 +1292,7 @@ object ShizukuManager {
 
     private fun executeTypedShellToggleCamMic(userId: Int, turnOff: Boolean): CommandResult {
         val targetVal = if (turnOff) 1 else 0
-        val cmd = "service call sensor_privacy 10 i32 $userId i32 1 i32 1 i32 $targetVal ; service call sensor_privacy 10 i32 $userId i32 1 i32 2 i32 $targetVal"
+        val cmd = "service call sensor_privacy ${SensorPrivacyCodes.SET_TOGGLE_PRIVACY} i32 $userId i32 ${SensorPrivacyCodes.SOURCE_QS_TILE} i32 ${SensorPrivacyCodes.SENSOR_CAMERA} i32 $targetVal ; service call sensor_privacy ${SensorPrivacyCodes.SET_TOGGLE_PRIVACY} i32 $userId i32 ${SensorPrivacyCodes.SOURCE_QS_TILE} i32 ${SensorPrivacyCodes.SENSOR_MICROPHONE} i32 $targetVal"
         if (isShizukuRunning() && isShizukuAuthorized()) {
             val res = executeShizukuInternalCommand(cmd)
             if (res.success) return res

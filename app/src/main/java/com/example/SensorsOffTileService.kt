@@ -138,7 +138,11 @@ class SensorsOffTileService : TileService() {
                 TileLogManager.updateTileDiagnostics(
                     applicationContext,
                     lastState = confirmedStateString,
-                    lastAction = "Toggle to ${if (target) "ON" else "OFF"} (Result: $confirmedStateString)",
+                    lastAction = if (success) {
+                        "Toggle to ${if (target) "ON" else "OFF"} (Result: $confirmedStateString)"
+                    } else {
+                        "Toggle to ${if (target) "ON" else "OFF"} Failed (State: $confirmedStateString)"
+                    },
                     lastLatencyMs = elapsedMs,
                     blockMode = cachedBlockMode
                 )
@@ -384,7 +388,7 @@ class SensorsOffTileService : TileService() {
         val targetState = when (state) {
             SensorPrivacyState.ENABLED -> Tile.STATE_ACTIVE
             SensorPrivacyState.DISABLED -> Tile.STATE_INACTIVE
-            SensorPrivacyState.UNKNOWN -> Tile.STATE_INACTIVE
+            SensorPrivacyState.UNKNOWN -> Tile.STATE_UNAVAILABLE
         }
         val targetIcon = when (state) {
             SensorPrivacyState.ENABLED -> cachedActiveIcon
@@ -394,7 +398,7 @@ class SensorsOffTileService : TileService() {
         val targetSubtitle = when (state) {
             SensorPrivacyState.ENABLED -> cachedActiveSubtitle
             SensorPrivacyState.DISABLED -> cachedDisabledSubtitle
-            SensorPrivacyState.UNKNOWN -> "Unknown"
+            SensorPrivacyState.UNKNOWN -> "Unavailable"
         }
 
         if (tile.state == targetState &&

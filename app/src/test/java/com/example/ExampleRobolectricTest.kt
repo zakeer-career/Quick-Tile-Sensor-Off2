@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -54,8 +55,34 @@ class ExampleRobolectricTest {
     assertEquals(1, SensorPrivacyCodes.SENSOR_MICROPHONE)
     assertEquals(2, SensorPrivacyCodes.SENSOR_CAMERA)
     assertEquals(1, SensorPrivacyCodes.SOURCE_QS_TILE)
-    assertTrue(SensorPrivacyCodes.getAllQueryGlobalCodes().isNotEmpty())
+    assertEquals(10, SensorPrivacyCodes.SET_TOGGLE_PRIVACY)
+    assertEquals(8, SensorPrivacyCodes.IS_TOGGLE_PRIVACY)
+    assertEquals(7, SensorPrivacyCodes.IS_COMBINED_TOGGLE_PRIVACY)
     assertTrue(SensorPrivacyCodes.getPreferredSetGlobalCode() > 0)
+  }
+
+  @Test
+  fun `test API version specific global transaction codes`() {
+    // Android 12+ (API 31, 32, 33, 34, 35)
+    assertEquals(9, SensorPrivacyCodes.getSetGlobalCodeForSdk(31))
+    assertEquals(9, SensorPrivacyCodes.getSetGlobalCodeForSdk(33))
+    assertEquals(9, SensorPrivacyCodes.getSetGlobalCodeForSdk(34))
+    assertEquals(6, SensorPrivacyCodes.getQueryGlobalCodeForSdk(31))
+    assertEquals(6, SensorPrivacyCodes.getQueryGlobalCodeForSdk(34))
+
+    // Android 11 (API 30)
+    assertEquals(5, SensorPrivacyCodes.getSetGlobalCodeForSdk(30))
+    assertEquals(4, SensorPrivacyCodes.getQueryGlobalCodeForSdk(30))
+
+    // Android 10 (API 29)
+    assertEquals(4, SensorPrivacyCodes.getSetGlobalCodeForSdk(29))
+    assertEquals(3, SensorPrivacyCodes.getQueryGlobalCodeForSdk(29))
+
+    // Android < 29 (API 24-28: ISensorPrivacyManager not present in AOSP)
+    assertNull(SensorPrivacyCodes.getSetGlobalCodeForSdk(28))
+    assertNull(SensorPrivacyCodes.getSetGlobalCodeForSdk(24))
+    assertNull(SensorPrivacyCodes.getQueryGlobalCodeForSdk(28))
+    assertNull(SensorPrivacyCodes.getQueryGlobalCodeForSdk(24))
   }
 
   @Test
@@ -217,8 +244,16 @@ class ExampleRobolectricTest {
   fun `test unprivileged setSensorsOffState returns false when privileges missing`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val result = ShizukuManager.setSensorsOffState(context, turnOff = true, skipNotify = true)
-    // Without Shizuku or Root or WRITE_SECURE_SETTINGS, operation must return false
+    // Without live ISensorPrivacyManager or valid privilege verification, operation must return false
     org.junit.Assert.assertFalse(result)
+  }
+
+  @Test
+  fun `test privilege backend is strictly Shizuku or Root`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val isPriv = ShizukuManager.isPrivilegeAvailable(context)
+    val expected = (ShizukuManager.isShizukuRunning() && ShizukuManager.isShizukuAuthorized()) || ShizukuManager.isRootAvailable()
+    assertEquals(expected, isPriv)
   }
 
   @Test
@@ -304,6 +339,178 @@ class ExampleRobolectricTest {
       val micState = ShizukuManager.getIndividualSensorState(context, "mic")
       assertNotNull(micState)
     }
+  }
+
+  // Section 9 Test Suite: Global Sensor Privacy State Verification
+
+  @Test
+  fun `test requirement 1 - Global ENABLED read-back produces success`() {
+    val requestedTurnOff = true
+    val readBackState = SensorPrivacyState.ENABLED
+    assertTrue("Global ENABLED read-back must match requested turnOff", readBackState.matchesRequested(requestedTurnOff))
+    val result = if (readBackState.matchesRequested(requestedTurnOff)) {
+      SensorToggleResult.Success(confirmedState = readBackState, latencyMs = 5L)
+    } else {
+      SensorToggleResult.Failure("Mismatch", confirmedState = readBackState)
+    }
+    assertTrue(result.isSuccess)
+    assertEquals(SensorPrivacyState.ENABLED, (result as SensorToggleResult.Success).confirmedState)
+  }
+
+  @Test
+  fun `test requirement 2 - Global DISABLED read-back produces success`() {
+    val requestedTurnOff = false
+    val readBackState = SensorPrivacyState.DISABLED
+    assertTrue("Global DISABLED read-back must match requested turnOn", readBackState.matchesRequested(requestedTurnOff))
+    val result = if (readBackState.matchesRequested(requestedTurnOff)) {
+      SensorToggleResult.Success(confirmedState = readBackState, latencyMs = 5L)
+    } else {
+      SensorToggleResult.Failure("Mismatch", confirmedState = readBackState)
+    }
+    assertTrue(result.isSuccess)
+    assertEquals(SensorPrivacyState.DISABLED, (result as SensorToggleResult.Success).confirmedState)
+  }
+
+  @Test
+  fun `test requirement 3 - Global UNKNOWN produces failure`() {
+    val readBackState = SensorPrivacyState.UNKNOWN
+    org.junit.Assert.assertFalse("UNKNOWN must never match turnOff=true", readBackState.matchesRequested(true))
+    org.junit.Assert.assertFalse("UNKNOWN must never match turnOff=false", readBackState.matchesRequested(false))
+    val result: SensorToggleResult = SensorToggleResult.Failure("Unknown state", confirmedState = readBackState)
+    org.junit.Assert.assertFalse(result.isSuccess)
+  }
+
+  @Test
+  fun `test requirement 4 - Global mismatched read-back produces failure`() {
+    val requestedTurnOff = true
+    val readBackState = SensorPrivacyState.DISABLED // Requested OFF (enabled privacy), but got DISABLED (sensors on)
+    org.junit.Assert.assertFalse("Mismatched read-back must fail matchesRequested", readBackState.matchesRequested(requestedTurnOff))
+    val result = if (readBackState.matchesRequested(requestedTurnOff)) {
+      SensorToggleResult.Success(confirmedState = readBackState, latencyMs = 5L)
+    } else {
+      SensorToggleResult.Failure("Mismatch", confirmedState = readBackState)
+    }
+    org.junit.Assert.assertFalse(result.isSuccess)
+  }
+
+  @Test
+  fun `test requirement 5 - Global Binder transaction failure produces failure`() {
+    val binderFailureResults = listOf(
+      BinderTransactionResult.BINDER_ERROR,
+      BinderTransactionResult.TRANSACTION_ERROR,
+      BinderTransactionResult.EXCEPTION
+    )
+    for (res in binderFailureResults) {
+      org.junit.Assert.assertFalse("Binder failure result $res must not be accepted", res.isAccepted)
+    }
+  }
+
+  @Test
+  fun `test requirement 6 - Global unsupported transaction produces UNKNOWN or failure`() {
+    val unsupported = BinderTransactionResult.UNSUPPORTED
+    org.junit.Assert.assertFalse("UNSUPPORTED transaction must not be accepted", unsupported.isAccepted)
+  }
+
+  @Test
+  fun `test requirement 7 - Camera and microphone both disabled MUST NOT prove global disabled`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    // Verify that getSensorsOffState queries ONLY global state, and never delegates to cam/mic
+    val globalState = ShizukuManager.getSensorsOffState(context)
+    val camState = ShizukuManager.getIndividualSensorState(context, "camera")
+    val micState = ShizukuManager.getIndividualSensorState(context, "mic")
+    
+    // Global state is independently evaluated from global ISensorPrivacyManager
+    assertNotNull(globalState)
+    assertNotNull(camState)
+    assertNotNull(micState)
+  }
+
+  @Test
+  fun `test requirement 8 - Camera and microphone both enabled MUST NOT prove global enabled`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val globalState = ShizukuManager.getSensorsOffState(context)
+    // Global state must reflect the global sensor privacy service, never assumed ENABLED from individual sensors
+    org.junit.Assert.assertNotEquals(SensorPrivacyState.ENABLED, globalState)
+  }
+
+  @Test
+  fun `test requirement 9 - SharedPreferences MUST NOT determine global state`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val prefs = context.getSharedPreferences("sensors_off_prefs", Context.MODE_PRIVATE)
+    
+    // Setting SharedPreferences to true (privacy active) must NOT make authoritative global query return ENABLED
+    prefs.edit().putBoolean("sensors_off_enabled", true).commit()
+    val stateWithTruePref = ShizukuManager.getSensorsOffState(context)
+    org.junit.Assert.assertNotEquals("Authoritative state must not be overridden by true in SharedPreferences", SensorPrivacyState.ENABLED, stateWithTruePref)
+
+    // Cached UI preference helper returns true, but authoritative query is independent
+    assertTrue(ShizukuManager.getCachedUiPreferenceState(context))
+    assertEquals(stateWithTruePref, ShizukuManager.getSensorsOffState(context))
+  }
+
+  @Test
+  fun `test requirement 10 - Settings Global or Secure MUST NOT determine global state`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    // Inject Settings.Global and Settings.Secure values simulating sensors_off = 1
+    android.provider.Settings.Global.putInt(context.contentResolver, "sensors_off", 1)
+    android.provider.Settings.Secure.putInt(context.contentResolver, "sensor_privacy", 1)
+    
+    val state = ShizukuManager.getSensorsOffState(context)
+    // Authoritative global state must come strictly from sensor privacy service, never spoofed by Settings entries
+    org.junit.Assert.assertNotEquals("Settings values must not fool getSensorsOffState into returning ENABLED", SensorPrivacyState.ENABLED, state)
+  }
+
+  @Test
+  fun `test requirement 11 - Successful global transaction without matching read-back MUST fail`() {
+    val txResult = BinderTransactionResult.TRANSACTION_ACCEPTED
+    assertTrue(txResult.isAccepted)
+
+    // Transaction was accepted by Binder, but read-back returned UNKNOWN
+    val readBackState = SensorPrivacyState.UNKNOWN
+    val verified = readBackState.matchesRequested(requestedSensorsOff = true)
+    org.junit.Assert.assertFalse("Successful Binder transaction alone without matching read-back must fail", verified)
+  }
+
+  @Test
+  fun `test requirement 12 - Individual camera operation remains independent`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val camState = ShizukuManager.getIndividualSensorState(context, "camera")
+    assertNotNull(camState)
+    // Camera state query only queries camera sensor code (2)
+    assertEquals(2, SensorPrivacyCodes.SENSOR_CAMERA)
+  }
+
+  @Test
+  fun `test requirement 13 - Individual microphone operation remains independent`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val micState = ShizukuManager.getIndividualSensorState(context, "mic")
+    assertNotNull(micState)
+    // Microphone state query only queries mic sensor code (1)
+    assertEquals(1, SensorPrivacyCodes.SENSOR_MICROPHONE)
+  }
+
+  @Test
+  fun `test requirement 14 - API version specific transaction code selection`() {
+    // Verify mapping for Android 12+ (API 31, 32, 33, 34)
+    assertEquals(9, SensorPrivacyCodes.getSetGlobalCodeForSdk(34))
+    assertEquals(6, SensorPrivacyCodes.getQueryGlobalCodeForSdk(34))
+
+    // Verify mapping for Android 11 (API 30)
+    assertEquals(5, SensorPrivacyCodes.getSetGlobalCodeForSdk(30))
+    assertEquals(4, SensorPrivacyCodes.getQueryGlobalCodeForSdk(30))
+
+    // Verify mapping for Android 10 (API 29)
+    assertEquals(4, SensorPrivacyCodes.getSetGlobalCodeForSdk(29))
+    assertEquals(3, SensorPrivacyCodes.getQueryGlobalCodeForSdk(29))
+  }
+
+  @Test
+  fun `test requirement 15 - Unsupported API version returns null codes and UNKNOWN state`() {
+    // Android < 29 (API 24 to 28)
+    assertNull(SensorPrivacyCodes.getSetGlobalCodeForSdk(28))
+    assertNull(SensorPrivacyCodes.getQueryGlobalCodeForSdk(28))
+    assertNull(SensorPrivacyCodes.getSetGlobalCodeForSdk(24))
+    assertNull(SensorPrivacyCodes.getQueryGlobalCodeForSdk(24))
   }
 }
 

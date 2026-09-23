@@ -45,8 +45,6 @@ data class SensorUiState(
     val isShizukuRunning: Boolean = false,
     val isShizukuAuthorized: Boolean = false,
     val isRootAvailable: Boolean = false,
-    val hasSecureSettingsPermission: Boolean = false,
-    val adbGrantCommand: String = "",
     val deviceManufacturer: String = Build.MANUFACTURER,
     val deviceModel: String = Build.MODEL,
     val androidVersion: String = Build.VERSION.RELEASE,
@@ -205,8 +203,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             val isRunning = ShizukuManager.isShizukuRunning()
             val isAuthorized = ShizukuManager.isShizukuAuthorized()
             val isRoot = ShizukuManager.isRootAvailable()
-            val hasPermission = ShizukuManager.hasSecureSettingsPermission(context)
-            val adbCmd = ShizukuManager.getAdbGrantCommand(context)
             val privacyState = ShizukuManager.getSensorsOffState(context)
             val isOff = (privacyState == SensorPrivacyState.ENABLED)
 
@@ -222,7 +218,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             val launcherAlias = ShizukuManager.getAppLauncherAlias(context)
 
             val updatedSensors = _uiState.value.sensorList.map { sensor ->
-                val sensorState = ShizukuManager.getIndividualSensorState(context, sensor.id, knownGlobalState = privacyState)
+                val sensorState = ShizukuManager.getIndividualSensorState(context, sensor.id)
                 val sensorBlocked = (sensorState == SensorPrivacyState.ENABLED)
                 sensor.copy(isBlocked = sensorBlocked)
             }
@@ -251,8 +247,6 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                     isShizukuRunning = isRunning,
                     isShizukuAuthorized = isAuthorized,
                     isRootAvailable = isRoot,
-                    hasSecureSettingsPermission = hasPermission,
-                    adbGrantCommand = adbCmd,
                     isSensorsOff = isOff,
                     appThemeMode = themeMode,
                     appLauncherAlias = launcherAlias,
@@ -292,9 +286,9 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 val success = ShizukuManager.setSensorsOffState(appContext, target)
 
                 if (success) {
-                    addLog("Status: Successfully set Master SensorsOff = $target and synced all sensors")
+                    addLog(if (target) "Status: Master SensorsOff enabled; authoritative state verified" else "Status: Master SensorsOff disabled; authoritative state verified")
                 } else {
-                    addLog("Error: Failed to set SensorsOff state. Ensure Shizuku, Root, or Secure Settings permission is granted.")
+                    addLog("Error: Failed to set SensorsOff state. Ensure Shizuku is authorized or Root privilege is granted.")
                     // Revert UI on failure
                     val revertedSensors = _uiState.value.sensorList.map { it.copy(isBlocked = current) }
                     _uiState.update { it.copy(isSensorsOff = current, sensorList = revertedSensors) }
