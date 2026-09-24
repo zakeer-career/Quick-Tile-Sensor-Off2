@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.8.6] - 2026-09-24
+
+### Feature Release: Dual-Source Telemetry System & Process-Isolated Companion Diagnostics
+
+#### Problem Analysis
+- **Companion Diagnostic Visibility Gap**:
+  - The independent `:tile` companion APK (`com.SensorsOff.tile`) runs in a separate process from the main app (`com.SensorsOff`). When diagnosing tile lifecycle events, Binder transactions, or state resolution issues, telemetry logs generated in the tile process were not accessible or viewable within the main app's telemetry tab.
+  - Users and developers needed an immediate, unified way to inspect, copy, and export structured companion events (`[TILE_PLUGIN]`) separately from main app logs (`[APP]`) without violating the zero-daemon, zero-background-service architecture.
+
+#### Root Cause
+- Because Android isolates memory across separate APK processes, static in-memory loggers in the main app could not capture events occurring within `SensorsOffTileService` in the `:tile` process.
+- An on-demand, process-safe communication channel was required to allow the main app to query, refresh, and clear companion diagnostics via standard Android IPC (`ContentProvider`) without persistent background services.
+
+#### Code Changes
+- `core/src/main/java/com/example/TilePluginLog.kt`:
+  - Implemented process-isolated logging engine for the `:tile` module with circular memory buffering (up to 200 entries), unique session IDs, PID tracking, and thread recording.
+  - Created structured event formatting with key-value pairs (`event=...`, `result=...`, `reason=...`).
+  - Added export report generation (`buildCompanionExportText`) formatted specifically for companion logs.
+- `tile/src/main/java/com/example/tile/TilePluginLogProvider.kt`:
+  - Created on-demand `ContentProvider` (`com.SensorsOff.tile.logprovider`) exposing query and delete operations for companion logs over `ContentResolver`.
+- `tile/src/main/java/com/example/tile/SensorsOffTileApp.kt`:
+  - Implemented companion `Application` class tracking process start, PID, and lifecycle init.
+- `tile/src/main/java/com/example/tile/SensorsOffTileService.kt`:
+  - Fully instrumented all tile service lifecycle steps (`process_start`, `TileService.onStartListening`, `shizuku_check`, `sensor_privacy_binder`, `authoritative_state_read`, `toggle`, `state_unknown`, `TileService.onStopListening`) with `TilePluginLog`.
+- `app/src/main/java/com/example/SensorViewModel.kt`:
+  - Added `companionLogs` state and `LogConsoleTab` enum (`MAIN_APP` vs `COMPANION`).
+  - Implemented `refreshCompanionLogs()`, `clearCompanionLogs()`, and `selectLogConsoleTab()`.
+- `app/src/main/java/com/example/MainActivity.kt`:
+  - Added sleek console selector tabs (`Main App [APP]` vs `Quick Tile Companion [TILE_PLUGIN]`).
+  - Implemented dedicated Companion telemetry cards with session ID, PID, event counts, "Copy [TILE_PLUGIN]", "Export TXT", "Sync", and "Clear" controls.
+  - Implemented styled monospace event list with distinct visual indicators for `state_unknown` errors and Binder transaction results.
+
+#### Telemetry & Verification
+- Unit & Build Verification: Successfully built and compiled with 0 errors.
+- Clean process separation: 100% on-demand queries via `ContentResolver` with 0 background daemons.
+
+---
+
 ## [2.8.5] - 2026-09-24
 
 ### Bugfix Release: Companion Quick Settings Tile State-Read Path & Dead Binder Recovery

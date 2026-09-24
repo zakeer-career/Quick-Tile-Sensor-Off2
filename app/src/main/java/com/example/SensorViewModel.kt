@@ -39,6 +39,11 @@ data class TileSettingsState(
     val customIconPath: String? = null
 )
 
+enum class LogConsoleTab(val displayName: String, val badge: String) {
+    MAIN_APP("Main App [APP]", "[APP]"),
+    COMPANION("Quick Tile Companion [TILE_PLUGIN]", "[TILE_PLUGIN]")
+}
+
 data class SensorUiState(
     val isSensorsOff: Boolean = false,
     val isShizukuInstalled: Boolean = false,
@@ -50,9 +55,11 @@ data class SensorUiState(
     val androidVersion: String = Build.VERSION.RELEASE,
     val appThemeMode: String = "system",
     val appLauncherAlias: String = "MainActivityDefault",
+    val selectedLogConsole: LogConsoleTab = LogConsoleTab.MAIN_APP,
     val selectedLogCategory: LogCategory = LogCategory.ALL,
     val selectedTimeMode: TimeDisplayMode = TimeDisplayMode.EXACT,
     val logs: List<String> = emptyList(),
+    val companionLogs: List<TilePluginLog.Entry> = emptyList(),
     val tileSettings: TileSettingsState = TileSettingsState(),
     val showExperimentalToggles: Boolean = false,
     val isTileCompanionInstalled: Boolean = false,
@@ -269,6 +276,9 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                     sensorList = updatedSensors
                 )
             }
+            if (_uiState.value.selectedLogConsole == LogConsoleTab.COMPANION) {
+                refreshCompanionLogs()
+            }
         }
     }
 
@@ -439,6 +449,34 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
         CompanionInstaller.openQuickSettings(context)
     }
 
+    fun selectLogConsoleTab(tab: LogConsoleTab) {
+        _uiState.update { it.copy(selectedLogConsole = tab) }
+        if (tab == LogConsoleTab.COMPANION) {
+            refreshCompanionLogs()
+        }
+    }
+
+    fun refreshCompanionLogs() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            val entries = TilePluginLog.fetchCompanionLogs(context)
+            _uiState.update { it.copy(companionLogs = entries) }
+        }
+    }
+
+    fun clearCompanionLogs() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            try {
+                context.contentResolver.delete(TilePluginLog.LOG_PROVIDER_URI, null, null)
+            } catch (e: Exception) {
+                TilePluginLog.clear(context)
+            }
+            _uiState.update { it.copy(companionLogs = emptyList()) }
+            refreshCompanionLogs()
+        }
+    }
+
     fun setLogCategoryFilter(category: LogCategory) {
         _uiState.update { it.copy(selectedLogCategory = category) }
     }
@@ -491,7 +529,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
         val context = getApplication<Application>().applicationContext
         val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
         _uiState.update { state ->
-            val updatedLogs = (listOf("[$timestamp] $msg") + state.logs).take(40)
+            val updatedLogs = (listOf("[APP] [$timestamp] $msg") + state.logs).take(40)
             state.copy(logs = updatedLogs)
         }
         TileLogManager.log(context, category, level, msg)

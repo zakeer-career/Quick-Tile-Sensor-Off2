@@ -11,6 +11,35 @@ Each commit entry includes:
 
 ---
 
+### [v2.8.6] - 2026-09-24
+
+```git
+feat(telemetry): implement process-isolated companion telemetry and dual-source log console
+
+Problem:
+1. Quick Tile Companion APK (com.SensorsOff.tile) executes in an independent process, making its lifecycle, Binder transactions, and toggle logs invisible in the main app's telemetry tab.
+2. Users and developers lacked a unified mechanism to inspect, copy, and export companion plugin logs ([TILE_PLUGIN]) separately from main app logs ([APP]).
+3. Telemetry sharing between processes must strictly adhere to the zero-daemon, zero-background-service architecture.
+
+Root Cause:
+1. Android OS process boundary prevents direct memory sharing between separate APK processes.
+2. On-demand IPC via ContentProvider and ContentResolver was required to fetch and clear companion diagnostic records without running persistent services or broadcast receivers.
+
+Changes:
+- core/src/main/java/com/example/TilePluginLog.kt: Created process-isolated diagnostic logger with memory-buffered records, session tracking, PID extraction, structured key-value formatting, and export generator.
+- tile/src/main/java/com/example/tile/TilePluginLogProvider.kt: Created on-demand ContentProvider (com.SensorsOff.tile.logprovider) for secure log querying and deletion.
+- tile/src/main/java/com/example/tile/SensorsOffTileApp.kt: Added Application class logging process startup.
+- tile/src/main/java/com/example/tile/SensorsOffTileService.kt: Fully instrumented tile lifecycle and IPC execution with TilePluginLog.
+- app/src/main/java/com/example/SensorViewModel.kt: Added companionLogs state, LogConsoleTab navigation, and refreshCompanionLogs()/clearCompanionLogs() operations.
+- app/src/main/java/com/example/MainActivity.kt: Implemented LogConsoleTab selector (Main App [APP] vs Quick Tile Companion [TILE_PLUGIN]), companion session/PID diagnostic header, dedicated Copy [TILE_PLUGIN] and Export TXT actions, and monospace structured event stream.
+
+Verification:
+- compile_applet succeeded with 0 errors across all modules (:core, :tile, :app).
+- Zero background daemons, zero polling, zero persistent services maintained.
+```
+
+---
+
 ### [v2.8.5] - 2026-09-24
 
 ```git

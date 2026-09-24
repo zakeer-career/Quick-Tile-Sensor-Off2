@@ -1517,10 +1517,11 @@ fun SleekLogsTabContent(
         }
     }
 
-    val exportText = remember(telemetryLogs, tileDiagnostics) {
+    val mainAppExportText = remember(telemetryLogs, tileDiagnostics) {
         buildString {
             appendLine("==================================================")
-            appendLine("           SensorsOff Advanced Telemetry          ")
+            appendLine("           SensorsOff Main App Telemetry          ")
+            appendLine("                   [APP] LOGS                     ")
             appendLine("==================================================")
             appendLine("App Version       : ${BuildConfig.VERSION_NAME} (SensorsOff)")
             appendLine("Device            : ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL} (Android ${android.os.Build.VERSION.RELEASE})")
@@ -1543,16 +1544,22 @@ fun SleekLogsTabContent(
         }
     }
 
+    val companionExportText = remember(uiState.companionLogs) {
+        TilePluginLog.buildCompanionExportText(context, uiState.companionLogs)
+    }
+
     val createDocumentLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
         uri?.let {
             try {
+                val textToWrite = if (uiState.selectedLogConsole == LogConsoleTab.COMPANION) companionExportText else mainAppExportText
                 context.contentResolver.openOutputStream(it)?.use { os ->
-                    os.write(exportText.toByteArray())
+                    os.write(textToWrite.toByteArray())
                 }
-                Toast.makeText(context, "Telemetry report exported successfully!", Toast.LENGTH_SHORT).show()
-                viewModel.addLog("Exported telemetry report to file.", category = LogCategory.SYSTEM)
+                val label = if (uiState.selectedLogConsole == LogConsoleTab.COMPANION) "Quick Tile Companion logs" else "Main App Telemetry"
+                Toast.makeText(context, "$label exported successfully!", Toast.LENGTH_SHORT).show()
+                viewModel.addLog("Exported $label to file.", category = LogCategory.SYSTEM)
             } catch (e: Exception) {
                 Toast.makeText(context, "Failed to export logs: ${e.message}", Toast.LENGTH_SHORT).show()
             }
@@ -1564,17 +1571,370 @@ fun SleekLogsTabContent(
             .fillMaxSize()
             .padding(horizontal = 20.dp)
     ) {
-        // 1. LIVE QUICK TILE MONITOR CARD WITH ADVANCED TIMING
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(18.dp),
-            colors = CardDefaults.cardColors(containerColor = colors.cardBg),
-            border = androidx.compose.foundation.BorderStroke(
-                1.dp,
-                if (tileDiagnostics.lastState.contains("ACTIVE")) colors.accentRose.copy(alpha = 0.5f)
-                else if (colors.isDark) colors.glowColor else colors.border
-            )
+        // 0. LOG CONSOLE SELECTOR (MAIN APP [APP] vs QUICK TILE COMPANION [TILE_PLUGIN])
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(if (colors.isDark) Color(0xFF141923) else Color(0xFFE2E8F0))
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
+            LogConsoleTab.values().forEach { tab ->
+                val isSelected = uiState.selectedLogConsole == tab
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            if (isSelected) {
+                                if (tab == LogConsoleTab.COMPANION) colors.accentCyan else colors.accentBlue
+                            } else Color.Transparent
+                        )
+                        .clickable { viewModel.selectLogConsoleTab(tab) }
+                        .padding(vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = tab.displayName,
+                        fontSize = 11.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                        color = if (isSelected) (if (tab == LogConsoleTab.COMPANION) Color(0xFF0F172A) else Color.White) else colors.textMuted
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        if (uiState.selectedLogConsole == LogConsoleTab.COMPANION) {
+            // ==================== COMPANION [TILE_PLUGIN] CONSOLE ====================
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.cardBg),
+                border = androidx.compose.foundation.BorderStroke(1.dp, colors.accentCyan.copy(alpha = 0.4f))
+            ) {
+                Column(modifier = Modifier.padding(14.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(colors.accentCyan.copy(alpha = 0.15f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.FlashOn,
+                                    contentDescription = "Companion Tile",
+                                    tint = colors.accentCyan,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Column {
+                                Text(
+                                    text = "COMPANION PLUGIN TELEMETRY",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.accentCyan,
+                                    letterSpacing = 1.sp
+                                )
+                                Text(
+                                    text = "Package: ${TilePluginLog.COMPANION_PACKAGE}",
+                                    fontSize = 10.sp,
+                                    color = colors.textSecondary
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(colors.accentCyan.copy(alpha = 0.15f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "SES_${TilePluginLog.sessionId}",
+                                fontSize = 10.sp,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.accentCyan
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (colors.isDark) Color(0xFF141923) else Color(0xFFF1F5F9))
+                                .padding(8.dp)
+                        ) {
+                            Column {
+                                Text("Process PID", fontSize = 9.sp, color = colors.textMuted)
+                                Text(
+                                    text = "${TilePluginLog.pid}",
+                                    fontSize = 12.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.textPrimary
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (colors.isDark) Color(0xFF141923) else Color(0xFFF1F5F9))
+                                .padding(8.dp)
+                        ) {
+                            Column {
+                                Text("Recorded Events", fontSize = 9.sp, color = colors.textMuted)
+                                Text(
+                                    text = "${uiState.companionLogs.size}",
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.accentCyan
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(if (colors.isDark) Color(0xFF141923) else Color(0xFFF1F5F9))
+                                .padding(8.dp)
+                        ) {
+                            Column {
+                                Text("Architecture", fontSize = 9.sp, color = colors.textMuted)
+                                Text(
+                                    text = "Standalone IPC",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = colors.accentGreen
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Companion Actions (Copy Companion Log, Export Companion Log, Refresh, Clear)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Button(
+                    onClick = {
+                        clipboardManager.setText(AnnotatedString(companionExportText))
+                        Toast.makeText(context, "Companion [TILE_PLUGIN] logs copied!", Toast.LENGTH_SHORT).show()
+                        viewModel.addLog("Copied [TILE_PLUGIN] companion logs to clipboard.", category = LogCategory.TILE)
+                    },
+                    modifier = Modifier.weight(1.1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.accentCyan),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 6.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp), tint = Color(0xFF0F172A))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Copy [TILE_PLUGIN]", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                }
+
+                Button(
+                    onClick = {
+                        val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
+                        createDocumentLauncher.launch("companion_plugin_logs_$timeStamp.txt")
+                    },
+                    modifier = Modifier.weight(1.1f),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.accentBlue),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 6.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Download, contentDescription = "Export", modifier = Modifier.size(14.dp), tint = Color.White)
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Export TXT", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
+                OutlinedButton(
+                    onClick = { viewModel.refreshCompanionLogs() },
+                    modifier = Modifier.weight(0.7f),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", modifier = Modifier.size(14.dp), tint = colors.accentGreen)
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text("Sync", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = colors.accentGreen)
+                }
+
+                OutlinedButton(
+                    onClick = { viewModel.clearCompanionLogs() },
+                    modifier = Modifier.weight(0.7f),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Clear", modifier = Modifier.size(14.dp), tint = colors.accentRose)
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text("Clear", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = colors.accentRose)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Companion Structured Log List
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 20.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(colors.cardBg)
+                    .border(1.dp, if (colors.isDark) colors.glowColor else colors.border, RoundedCornerShape(16.dp))
+                    .padding(12.dp)
+            ) {
+                if (uiState.companionLogs.isEmpty()) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "[ NO [TILE_PLUGIN] LOGS RECORDED YET ]",
+                                fontSize = 11.sp,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                color = colors.textMuted
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Pull down Quick Settings shade or tap tile to emit companion events.",
+                                fontSize = 10.sp,
+                                color = colors.textSecondary
+                            )
+                        }
+                    }
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(uiState.companionLogs.size, key = { idx -> uiState.companionLogs[idx].id }) { idx ->
+                            val entry = uiState.companionLogs[idx]
+                            val isUnknown = entry.event == "state_unknown" || entry.fields["result"] == "FAILURE" || entry.fields["verification"] == "FAILED"
+
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (colors.isDark) Color(0xFF131822) else Color(0xFFF8FAFC))
+                                    .border(
+                                        1.dp,
+                                        if (isUnknown) colors.accentRose.copy(alpha = 0.5f) else Color.Transparent,
+                                        RoundedCornerShape(10.dp)
+                                    )
+                                    .padding(10.dp)
+                            ) {
+                                Column {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .clip(RoundedCornerShape(6.dp))
+                                                    .background(
+                                                        if (isUnknown) colors.accentRose.copy(alpha = 0.2f)
+                                                        else colors.accentCyan.copy(alpha = 0.2f)
+                                                    )
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(
+                                                    text = "[TILE_PLUGIN]",
+                                                    fontSize = 8.5.sp,
+                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = if (isUnknown) colors.accentRose else colors.accentCyan
+                                                )
+                                            }
+
+                                            Spacer(modifier = Modifier.width(6.dp))
+
+                                            Text(
+                                                text = entry.formattedTime,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                color = colors.textMuted
+                                            )
+                                        }
+
+                                        Text(
+                                            text = "PID:${entry.pid} • ${entry.thread}",
+                                            fontSize = 9.sp,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                            color = colors.textMuted
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(4.dp))
+
+                                    Text(
+                                        text = "event=${entry.event}",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                        color = if (isUnknown) colors.accentRose else colors.textPrimary
+                                    )
+
+                                    if (entry.fields.isNotEmpty()) {
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clip(RoundedCornerShape(6.dp))
+                                                .background(if (colors.isDark) Color(0xFF0D1117) else Color(0xFFEDF2F7))
+                                                .padding(6.dp)
+                                        ) {
+                                            entry.fields.forEach { (key, value) ->
+                                                Text(
+                                                    text = "$key = $value",
+                                                    fontSize = 10.sp,
+                                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                                    color = if (key == "reason" || key == "error") colors.accentRose else colors.textSecondary
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // 1. LIVE QUICK TILE MONITOR CARD WITH ADVANCED TIMING
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(18.dp),
+                colors = CardDefaults.cardColors(containerColor = colors.cardBg),
+                border = androidx.compose.foundation.BorderStroke(
+                    1.dp,
+                    if (tileDiagnostics.lastState.contains("ACTIVE")) colors.accentRose.copy(alpha = 0.5f)
+                    else if (colors.isDark) colors.glowColor else colors.border
+                )
+            ) {
             Column(modifier = Modifier.padding(14.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1840,8 +2200,8 @@ fun SleekLogsTabContent(
         ) {
             Button(
                 onClick = {
-                    if (exportText.isNotBlank()) {
-                        clipboardManager.setText(AnnotatedString(exportText))
+                    if (mainAppExportText.isNotBlank()) {
+                        clipboardManager.setText(AnnotatedString(mainAppExportText))
                         Toast.makeText(context, "Full telemetry report copied!", Toast.LENGTH_SHORT).show()
                         viewModel.addLog("Copied telemetry report to clipboard.", category = LogCategory.SYSTEM)
                     }
@@ -2061,6 +2421,7 @@ fun SleekLogsTabContent(
             }
         }
     }
+}
 }
 
 @Composable

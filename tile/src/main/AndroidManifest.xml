@@ -8,6 +8,7 @@
     </queries>
 
     <application
+        android:name=".SensorsOffTileApp"
         android:allowBackup="true"
         android:icon="@drawable/tile_icon_sensorsoff_active"
         android:label="@string/tile_companion_app_name"
@@ -25,6 +26,12 @@
             android:enabled="true"
             android:exported="true"
             android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+        <!-- Dedicated Log Provider for Companion [TILE_PLUGIN] Diagnostics -->
+        <provider
+            android:name="com.example.tile.TilePluginLogProvider"
+            android:authorities="${applicationId}.logprovider"
+            android:exported="true" />
 
         <!-- Self-Contained Independent Quick Settings Tile Service -->
         <service

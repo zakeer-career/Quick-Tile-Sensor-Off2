@@ -79,7 +79,7 @@ data class LogEntry(
         val procStr = if (processTag.isNotBlank()) " [$processTag]" else ""
         val detailStr = if (detail.isNotBlank()) "\n  ↳ $detail" else ""
         val dateTimeStr = if (fullDateTime.isNotBlank()) fullDateTime else formattedTime
-        return "[$dateTimeStr]$deltaStr$procStr [${category.badgeText}] [${level.name}] $title$execStr$detailStr"
+        return "[APP] [$dateTimeStr]$deltaStr$procStr [${category.badgeText}] [${level.name}] $title$execStr$detailStr"
     }
 }
 
@@ -272,7 +272,7 @@ object TileLogManager {
             processTag = processTag
         )
 
-        Log.d(TAG, "[$processTag] [${category.badgeText}] $title | $detail")
+        Log.d(TAG, "[APP] [$processTag] [${category.badgeText}] $title | $detail")
 
         _logsFlow.update { current ->
             (listOf(entry) + current).take(MAX_LOGS)

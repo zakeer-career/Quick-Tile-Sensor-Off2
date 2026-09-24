@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.8.6 - Dual-Source Telemetry System & Process-Isolated Companion Diagnostics](#v286---dual-source-telemetry-system--process-isolated-companion-diagnostics)
 - [v2.8.5 - Companion Quick Settings Tile State-Read Path & Dead Binder Recovery](#v285---companion-quick-settings-tile-state-read-path--dead-binder-recovery)
 - [v2.8.4 - Quick Tile Companion Installation Flow & Secure FileProvider Delivery](#v284---quick-tile-companion-installation-flow--secure-fileprovider-delivery)
 - [v2.8.3 - Modular Two-APK Architecture & Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery](#v283---modular-two-apk-architecture--quick-settings-tile-resilience-zero-daemon-lifecycle-recovery)
@@ -45,6 +46,35 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.8.6] - Dual-Source Telemetry System & Process-Isolated Companion Diagnostics
+
+#### Problem Analysis
+- **Companion Telemetry Isolation**:
+  - Following the architectural separation into a modular two-APK model (`com.SensorsOff` main app and `com.SensorsOff.tile` companion tile), all Quick Settings tile lifecycle callbacks, Binder transactions, and toggle executions execute within the independent `:tile` process.
+  - Telemetry logs recorded during tile execution were not accessible in the main app's telemetry tab because static in-memory data structures are isolated per OS process.
+  - When debugging tile behaviors (such as shade opening, Shizuku availability checks, raw Binder transaction codes, or toggle latency), users and developers had no direct UI mechanism to view or export companion-specific logs (`[TILE_PLUGIN]`).
+- **Constraint Compliance**:
+  - Telemetry bridging between the companion process and the main app had to strictly conform to the zero-background-daemon, zero-polling architecture. Persistent background IPC services or socket daemons were strictly prohibited.
+
+#### Root Cause
+1. **OS Process Boundary**: Android assigns separate Linux process spaces and memory heaps to distinct application packages. Static state within `TileLogManager` in the main app is inaccessible to the `:tile` process and vice-versa.
+2. **Missing Inter-Process Log Exporter**: There was no on-demand, process-safe IPC mechanism to query companion diagnostics without keeping services alive.
+
+#### Engineered Resolution & Impact
+1. **Process-Isolated Logger (`TilePluginLog`)**:
+   - Created a circular memory-buffered logger in `:core` dedicated to the `:tile` module.
+   - Captures process ID (`Process.myPid()`), unique session ID (`System.currentTimeMillis() % 100000`), thread names, and structured event key-value pairs (`event=...`, `result=...`, `reason=...`).
+2. **On-Demand ContentProvider Bridge (`TilePluginLogProvider`)**:
+   - Implemented `TilePluginLogProvider` under authority `com.SensorsOff.tile.logprovider`.
+   - Supports `query()` to return log entries as structured cursor rows and `delete()` to clear companion logs.
+   - Operates 100% on-demand; the provider is instantiated by the OS only when queried by the main app and requires zero persistent background processes.
+3. **Dual-Source UI Console (`MainActivity.kt` & `SensorViewModel.kt`)**:
+   - Introduced `LogConsoleTab` (`MAIN_APP` vs `COMPANION`) in the Telemetry tab.
+   - Dedicated "Copy [TILE_PLUGIN]" and "Export TXT" actions allow copying and saving companion-only logs formatted with session headers, PIDs, and event timestamps.
+   - Companion log view features rich visual indicators highlighting state resolution errors (`state_unknown`), failed Binder transactions, and toggle latencies.
 
 ---
 
