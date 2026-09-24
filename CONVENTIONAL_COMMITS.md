@@ -11,6 +11,34 @@ Each commit entry includes:
 
 ---
 
+### [v2.8.5] - 2026-09-24
+
+```git
+fix(tile): fix companion quick settings tile state-read path and dead binder recovery
+
+Problem:
+1. The standalone Companion Quick Settings tile (com.SensorsOff.tile) intermittently displayed "Sensors Off — State Unknown" on shade opening even when Shizuku was running, authorized, and the authoritative sensor state was known.
+2. SystemServiceHelper.getSystemService("sensor_privacy") returned a pre-wrapped IBinder proxy which was wrapped again by ShizukuBinderWrapper, breaking remote IPC transact routing.
+3. Dead Binder proxies were not automatically invalidated on RemoteException, causing subsequent reads to use the stale reference and return UNKNOWN.
+4. Companion TileService lacked detailed session/PID/API diagnostics.
+
+Root Cause:
+1. Double-wrapping of ShizukuBinderWrapper on SystemServiceHelper returns caused Parcel transact failures across Shizuku's remote transaction interface.
+2. Cached IBinder reference was retained without invalidation when transact returned false or threw RemoteException.
+
+Changes:
+- core/src/main/java/com/example/ShizukuManager.kt: Added instance check before wrapping IBinder in getSensorPrivacyBinder(), added automatic invalidation and immediate retry in queryDirectSensorPrivacy(), and structured PID/API diagnostic logging.
+- tile/src/main/java/com/example/tile/SensorsOffTileService.kt: Added session ID tracking and comprehensive diagnostics to onStartListening() state read flow.
+- tile/src/test/java/com/example/tile/SensorsOffTileCompanionTest.kt: Added unit tests for API transaction code mappings, dead binder invalidation, and authoritative state resolution.
+- app/src/main/assets/tile-companion.apk: Rebuilt bundled companion APK.
+
+Verification:
+- gradle testDebugUnitTest passed 100% across all modules.
+- Zero-daemon, zero-polling architecture strictly preserved.
+```
+
+---
+
 ### [v2.8.4] - 2026-09-23
 
 ```git

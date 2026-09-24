@@ -352,7 +352,7 @@ object ShizukuManager {
             if (!binder.isBinderAlive) {
                 return null
             }
-            val wrapper = ShizukuBinderWrapper(binder)
+            val wrapper = if (binder is ShizukuBinderWrapper) binder else ShizukuBinderWrapper(binder)
             cachedSensorPrivacyBinder = wrapper
             wrapper
         } catch (e: SecurityException) {
@@ -379,8 +379,47 @@ object ShizukuManager {
      * - Android <29: Unsupported (returns UNKNOWN)
      */
     fun queryDirectSensorPrivacy(): SensorPrivacyState {
-        val txCode = SensorPrivacyCodes.getQueryGlobalCodeForSdk() ?: return SensorPrivacyState.UNKNOWN
-        val wrapper = getSensorPrivacyBinder() ?: return SensorPrivacyState.UNKNOWN
+        val pid = android.os.Process.myPid()
+        val sdkInt = Build.VERSION.SDK_INT
+        val txCode = SensorPrivacyCodes.getQueryGlobalCodeForSdk(sdkInt)
+        if (txCode == null) {
+            Log.d(TAG, "[$pid] SDK $sdkInt unsupported for global sensor privacy query")
+            return SensorPrivacyState.UNKNOWN
+        }
+
+        val isRunning = isShizukuRunning()
+        val isAuth = if (isRunning) isShizukuAuthorized() else false
+        if (!isRunning || !isAuth) {
+            Log.d(TAG, "[$pid] Shizuku unavailable (running=$isRunning, auth=$isAuth) for query tx $txCode")
+            return SensorPrivacyState.UNKNOWN
+        }
+
+        var wrapper = getSensorPrivacyBinder()
+        if (wrapper == null || !wrapper.isBinderAlive) {
+            Log.d(TAG, "[$pid] sensor_privacy binder null or dead for query tx $txCode")
+            invalidateSensorPrivacyBinder()
+            return SensorPrivacyState.UNKNOWN
+        }
+
+        var result = executeQueryTransact(wrapper, txCode, sdkInt, pid)
+        if (result != SensorPrivacyState.UNKNOWN) {
+            return result
+        }
+
+        // If direct query failed (e.g. stale/dead binder), invalidate and reacquire once immediately
+        invalidateSensorPrivacyBinder()
+        val freshWrapper = getSensorPrivacyBinder()
+        if (freshWrapper != null && freshWrapper !== wrapper && freshWrapper.isBinderAlive) {
+            result = executeQueryTransact(freshWrapper, txCode, sdkInt, pid)
+            if (result != SensorPrivacyState.UNKNOWN) {
+                return result
+            }
+        }
+
+        return SensorPrivacyState.UNKNOWN
+    }
+
+    private fun executeQueryTransact(wrapper: IBinder, txCode: Int, sdkInt: Int, pid: Int): SensorPrivacyState {
         val data = Parcel.obtain()
         val reply = Parcel.obtain()
         return try {
@@ -388,19 +427,24 @@ object ShizukuManager {
             val res = wrapper.transact(txCode, data, reply, 0)
             if (res) {
                 reply.readException()
-                val isEnabled = reply.readInt() != 0
-                if (isEnabled) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED
+                val rawVal = reply.readInt()
+                val isEnabled = rawVal != 0
+                val state = if (isEnabled) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED
+                Log.d(TAG, "[$pid] Direct query tx $txCode (API $sdkInt) -> raw: $rawVal -> $state")
+                state
             } else {
+                Log.w(TAG, "[$pid] Direct query tx $txCode (API $sdkInt) returned false from transact")
                 SensorPrivacyState.UNKNOWN
             }
         } catch (e: RemoteException) {
-            Log.d(TAG, "RemoteException querying global sensor privacy code $txCode: ${e.message}")
+            Log.w(TAG, "[$pid] RemoteException in direct query tx $txCode (API $sdkInt): ${e.message}")
+            invalidateSensorPrivacyBinder()
             SensorPrivacyState.UNKNOWN
         } catch (e: SecurityException) {
-            Log.d(TAG, "SecurityException querying global sensor privacy code $txCode: ${e.message}")
+            Log.w(TAG, "[$pid] SecurityException in direct query tx $txCode (API $sdkInt): ${e.message}")
             SensorPrivacyState.UNKNOWN
-        } catch (t: Exception) {
-            Log.d(TAG, "Exception querying global sensor privacy code $txCode: ${t.message}")
+        } catch (t: Throwable) {
+            Log.w(TAG, "[$pid] Throwable in direct query tx $txCode (API $sdkInt): ${t.message}")
             SensorPrivacyState.UNKNOWN
         } finally {
             data.recycle()

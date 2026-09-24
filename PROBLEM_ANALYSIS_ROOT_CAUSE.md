@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.8.5 - Companion Quick Settings Tile State-Read Path & Dead Binder Recovery](#v285---companion-quick-settings-tile-state-read-path--dead-binder-recovery)
 - [v2.8.4 - Quick Tile Companion Installation Flow & Secure FileProvider Delivery](#v284---quick-tile-companion-installation-flow--secure-fileprovider-delivery)
 - [v2.8.3 - Modular Two-APK Architecture & Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery](#v283---modular-two-apk-architecture--quick-settings-tile-resilience-zero-daemon-lifecycle-recovery)
 - [v2.8.2 - API-Version-Specific Binder Transactions & Documentation Alignment](#v282---api-version-specific-binder-transactions--documentation-alignment)
@@ -44,6 +45,37 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.8.5] - Companion Quick Settings Tile State-Read Path & Dead Binder Recovery
+
+#### Problem Analysis
+- **Intermittent "State Unknown" on Companion Tile**:
+  - Users reported that after installing the independent Quick Tile Companion (`com.SensorsOff.tile`), opening the Quick Settings shade would intermittently display `Sensors Off — State Unknown` instead of the active or inactive state.
+  - Telemetry showed that Shizuku was running and authorized, yet `queryDirectSensorPrivacy()` returned `SensorPrivacyState.UNKNOWN`.
+- **IPC Failure on Reacquisition**:
+  - When the remote Shizuku Binder or system service Binder proxy became invalidated during process hibernation or configuration changes, subsequent `transact()` calls failed or threw `RemoteException`.
+  - The companion tile did not recover from transient Binder errors, causing subsequent shade expansions to remain in `UNKNOWN`.
+
+#### Root Cause
+1. **ShizukuBinderWrapper Double-Wrapping**:
+   - `SystemServiceHelper.getSystemService("sensor_privacy")` internally returns a `ShizukuBinderWrapper` when called through Shizuku's reflection bridge.
+   - Calling `ShizukuBinderWrapper(binder)` unconditionally wrapped the wrapper again, generating nested Binder delegates. When Parcel transactions were executed on nested wrappers, Shizuku IPC dispatch failed.
+2. **Missing Dead Binder Invalidation & Recovery**:
+   - When a transaction threw `RemoteException` or returned `false`, `cachedSensorPrivacyBinder` remained cached as a dead proxy. Subsequent query calls reused the dead proxy without invalidation, resulting in repeated failures.
+3. **Companion Diagnostics Visibility**:
+   - The companion tile did not emit instance session IDs or detailed PID/API level diagnostics in telemetry logs, making live debugging of companion-specific Binder states difficult.
+
+#### Engineered Resolution & Impact
+- **Double-Wrap Guard**:
+  - In `ShizukuManager.getSensorPrivacyBinder()`, checked `if (binder is ShizukuBinderWrapper) binder else ShizukuBinderWrapper(binder)`.
+- **Automatic Invalidation & Immediate Retry**:
+  - In `ShizukuManager.queryDirectSensorPrivacy()`, added automatic invalidation upon failure and a single immediate fresh proxy acquisition and retry before returning `UNKNOWN`.
+- **Session & Transaction Diagnostics**:
+  - Added atomic `instanceId` tracking and detailed lifecycle logging in `SensorsOffTileService.onStartListening()`, capturing PID, session ID, Shizuku availability, Binder status, API level, and raw transaction results.
+- **Verification & Zero-Daemon Preservation**:
+  - Added comprehensive unit tests in `SensorsOffTileCompanionTest.kt` verifying API 29-34 transaction code mappings, dead Binder recovery, and authoritative state resolution. All 77 build/test tasks passed with 100% success while strictly preserving zero-daemon, zero-polling architecture.
 
 ---
 

@@ -12,6 +12,7 @@ import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
 import com.example.LogLevel
+import com.example.SensorPrivacyCodes
 import com.example.SensorPrivacyState
 import com.example.ShizukuManager
 import com.example.TileLogManager
@@ -35,7 +36,10 @@ class SensorsOffTileService : TileService() {
 
     companion object {
         private const val TAG = "SensorsOffTileCompanion"
+        private val sessionCounter = java.util.concurrent.atomic.AtomicLong(1)
     }
+
+    private val instanceId: String = "tile-session-${sessionCounter.getAndIncrement()}"
 
     @Volatile private var pendingTargetState: Boolean? = null
     @Volatile private var pendingTargetExpiryTimeMs: Long = 0L
@@ -252,11 +256,12 @@ class SensorsOffTileService : TileService() {
         super.onStartListening()
         listeningJob?.cancel()
 
+        val pid = android.os.Process.myPid()
         TileLogManager.logLifecycleEvent(
             applicationContext,
             "CompanionTileService",
             "onStartListening",
-            "Quick Settings shade opened / tile listening started"
+            "Session: $instanceId (PID: $pid) | Quick Settings shade opened / tile listening started"
         )
 
         // Reconstruct / verify runtime dependencies on each listening cycle
@@ -275,6 +280,13 @@ class SensorsOffTileService : TileService() {
         // 2. Fast asynchronous query to synchronize tile with real hardware state
         listeningJob = serviceScope.launch(Dispatchers.IO) {
             try {
+                val isShizukuRunning = ShizukuManager.isShizukuRunning()
+                val isShizukuAuthorized = if (isShizukuRunning) ShizukuManager.isShizukuAuthorized() else false
+                val binder = ShizukuManager.getSensorPrivacyBinder()
+                val isBinderAlive = binder?.isBinderAlive == true
+                val sdkInt = Build.VERSION.SDK_INT
+                val txCode = if (cachedBlockMode == "cam_mic") SensorPrivacyCodes.IS_TOGGLE_PRIVACY else SensorPrivacyCodes.getQueryGlobalCodeForSdk(sdkInt)
+
                 val currentState = if (cachedBlockMode == "cam_mic") {
                     ShizukuManager.getCamMicCombinedState(applicationContext)
                 } else {
@@ -287,11 +299,13 @@ class SensorsOffTileService : TileService() {
                     SensorPrivacyState.UNKNOWN -> Tile.STATE_INACTIVE
                 }
 
+                val detailString = "PID: $pid | Session: $instanceId | Shizuku: [run=$isShizukuRunning, auth=$isShizukuAuthorized] | BinderAlive: $isBinderAlive | API: $sdkInt | TxCode: $txCode | Mode: $cachedBlockMode | State: $currentState"
+
                 TileLogManager.logAuthoritativeState(
                     applicationContext,
                     currentState,
                     mappedTileState,
-                    "onStartListening hardware query"
+                    detailString
                 )
 
                 if (pendingTargetState == null || System.currentTimeMillis() >= pendingTargetExpiryTimeMs) {

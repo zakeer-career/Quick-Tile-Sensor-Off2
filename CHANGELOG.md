@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.8.5] - 2026-09-24
+
+### Bugfix Release: Companion Quick Settings Tile State-Read Path & Dead Binder Recovery
+
+#### Problem Analysis
+- **Intermittent "State Unknown" on Companion Tile**:
+  - The independent `:tile` companion APK (`com.SensorsOff.tile`) sometimes displayed `Sensors Off — State Unknown` upon opening the Quick Settings shade, even when Shizuku was authorized and the authoritative global sensor privacy state was known.
+  - In-flight Binder transactions failed or stalled when `SystemServiceHelper.getSystemService("sensor_privacy")` returned an already-wrapped `IBinder` that was double-wrapped with `ShizukuBinderWrapper`, breaking remote IPC dispatch.
+  - Stale or dead Binder proxies remained cached after process suspension or Shizuku connection reset, leading to subsequent queries returning `UNKNOWN`.
+
+#### Root Cause
+1. **ShizukuBinderWrapper Double-Wrapping**: `SystemServiceHelper.getSystemService("sensor_privacy")` internally returns a wrapped proxy. Calling `ShizukuBinderWrapper(binder)` unconditionally resulted in nested wrappers, causing IPC failure during `transact()`.
+2. **Missing Dead Binder Invalidation & Immediate Recovery**: When direct Binder queries encountered `RemoteException` or transact errors, the cached Binder was not immediately invalidated, preventing subsequent reads from obtaining a fresh, working Binder proxy.
+3. **Companion Diagnostics Gap**: The companion tile lacked session ID, PID, and detailed transaction diagnostics to trace the exact state-read lifecycle.
+
+#### Code Changes
+- `core/src/main/java/com/example/ShizukuManager.kt`:
+  - Fixed `getSensorPrivacyBinder()` to check `if (binder is ShizukuBinderWrapper) binder else ShizukuBinderWrapper(binder)`, eliminating redundant wrapping.
+  - Updated `queryDirectSensorPrivacy()` to immediately invalidate dead Binders upon `RemoteException` and perform a single immediate reacquisition retry.
+  - Added structured diagnostic logging with PID, API level, and raw transaction results.
+- `tile/src/main/java/com/example/tile/SensorsOffTileService.kt`:
+  - Added session ID tracking (`instanceId`) via atomic counter.
+  - Enhanced `onStartListening()` diagnostics to log PID, session ID, Shizuku availability, Binder alive status, API level, transaction code, and state resolution.
+- `tile/src/test/java/com/example/tile/SensorsOffTileCompanionTest.kt`:
+  - Added unit tests verifying API-specific read transaction mappings (API 29=3, API 30=4, API 31+=6), dead Binder recovery, and authoritative state resolution.
+- `app/src/main/assets/tile-companion.apk`:
+  - Rebuilt and updated bundled companion APK.
+
+#### Telemetry & Verification
+- Unit tests: 100% tests passing across `:core`, `:app`, and `:tile` modules.
+- Preserved zero-daemon, zero-polling architecture with no background services or boot receivers.
+
+---
+
 ## [2.8.4] - 2026-09-23
 
 ### Production Release: Quick Tile Companion Installation Flow & Architecture Hardening
