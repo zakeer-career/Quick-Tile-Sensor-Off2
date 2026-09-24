@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.8.7 - Persistent Package-Private Companion Diagnostic Pipeline & Zero-Daemon IPC](#v287---persistent-package-private-companion-diagnostic-pipeline--zero-daemon-ipc)
 - [v2.8.6 - Dual-Source Telemetry System & Process-Isolated Companion Diagnostics](#v286---dual-source-telemetry-system--process-isolated-companion-diagnostics)
 - [v2.8.5 - Companion Quick Settings Tile State-Read Path & Dead Binder Recovery](#v285---companion-quick-settings-tile-state-read-path--dead-binder-recovery)
 - [v2.8.4 - Quick Tile Companion Installation Flow & Secure FileProvider Delivery](#v284---quick-tile-companion-installation-flow--secure-fileprovider-delivery)
@@ -46,6 +47,37 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.8.7] - Persistent Package-Private Companion Diagnostic Pipeline & Zero-Daemon IPC
+
+#### Problem Analysis
+- **Companion Diagnostic Zero-Events Bug**:
+  - In v2.8.6, following the release of the dual-console telemetry view, users testing the companion tile observed that the companion diagnostic console showed "Received Events: 0" and `[ NO [TILE_PLUGIN] LOGS RECORDED YET ]` even after pulling down the Quick Settings shade or tapping the Sensors Off companion tile.
+  - Furthermore, if an IPC security exception or query failure occurred across the `ContentProvider` boundary, the UI silently fell back to an empty list without communicating the underlying failure reason.
+
+#### Root Cause
+1. **Volatile In-Memory vs Process Lifecycle Unbinding**:
+   - `TilePluginLog` initially relied on in-memory buffers and asynchronous `SharedPreferences` writes. Because Android's SystemUI unbinds `TileService` abruptly when the Quick Settings shade is collapsed, the companion process was frequently torn down before asynchronous in-memory buffers could be queried by the main app or committed to disk.
+2. **Missing Package-Private File Persistence**:
+   - Companion diagnostic events were not written directly and synchronously to a durable, package-local file (`filesDir/tile_plugin.log`) within the companion APK sandbox.
+3. **Absence of Diagnostic Pipeline Test Triggers**:
+   - There was no on-demand mechanism to trigger a diagnostic event inside the companion process across the IPC boundary to verify that the ContentProvider bridge and file storage were fully operational.
+
+#### Engineered Resolution & Impact
+1. **Direct Synchronous File Logging Engine**:
+   - Re-engineered `TilePluginLog` to synchronously append every structured JSON record directly to `context.filesDir / "tile_plugin.log"`.
+   - Added bounded log file rotation (256 KB limit) to guarantee deterministic, lightweight storage without memory leaks or unbounded disk growth.
+2. **Mandatory Lifecycle and Diagnostic Logging**:
+   - Instrumented complete lifecycle hooks in `SensorsOffTileApp` (`COMPANION_PROCESS_CREATED`), `SensorsOffTileService.onCreate` (`TILE_SERVICE_ON_CREATE`), `onStartListening` (`TILE_SERVICE_ON_START_LISTENING`), `onClick` (`TILE_SERVICE_ON_CLICK`), `onStopListening` (`TILE_SERVICE_ON_STOP_LISTENING`), and `onDestroy` (`TILE_SERVICE_ON_DESTROY`).
+3. **On-Demand ContentProvider Integration, Security Hardening & Test Triggers**:
+   - `TilePluginLogProvider` queries the persistent file directly on-demand.
+   - Enforced strict caller authorization inside `checkCallingPermission()`: caller UID must match `Process.myUid()`, `com.SensorsOff`, or `com.SensorsOff.tile`. All unauthorized callers receive a `SecurityException`.
+   - Added complete companion self-test validation (`performCompanionSelfTest`) which synchronously inserts `TEST_LOG_WRITE`, immediately queries back the log provider, verifies the exact return of `TEST_LOG_WRITE`, and renders explicit visual banner feedback in the UI.
+   - Explicitly surfaced error states in `SensorUiState` (`companionLogError`, `companionSelfTestStatus`) rather than masking IPC failures as empty lists.
+4. **Zero-Daemon Architecture Preservation**:
+   - All logging operations execute strictly on-demand with 0 background threads, 0 polling, 0 daemons, and 0 wake locks.
 
 ---
 

@@ -1735,10 +1735,10 @@ fun SleekLogsTabContent(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Companion Actions (Copy Companion Log, Export Companion Log, Refresh, Clear)
+            // Companion Actions (Copy Companion Log, Export Companion Log, Write Test Log, Refresh, Clear)
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Button(
                     onClick = {
@@ -1746,14 +1746,14 @@ fun SleekLogsTabContent(
                         Toast.makeText(context, "Companion [TILE_PLUGIN] logs copied!", Toast.LENGTH_SHORT).show()
                         viewModel.addLog("Copied [TILE_PLUGIN] companion logs to clipboard.", category = LogCategory.TILE)
                     },
-                    modifier = Modifier.weight(1.1f),
+                    modifier = Modifier.weight(1f),
                     colors = ButtonDefaults.buttonColors(containerColor = colors.accentCyan),
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 6.dp)
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(14.dp), tint = Color(0xFF0F172A))
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Copy [TILE_PLUGIN]", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                    Icon(imageVector = Icons.Default.ContentCopy, contentDescription = "Copy", modifier = Modifier.size(13.dp), tint = Color(0xFF0F172A))
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Copy [TILE_PLUGIN]", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                 }
 
                 Button(
@@ -1761,40 +1761,85 @@ fun SleekLogsTabContent(
                         val timeStamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", java.util.Locale.getDefault()).format(java.util.Date())
                         createDocumentLauncher.launch("companion_plugin_logs_$timeStamp.txt")
                     },
-                    modifier = Modifier.weight(1.1f),
+                    modifier = Modifier.weight(0.9f),
                     colors = ButtonDefaults.buttonColors(containerColor = colors.accentBlue),
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 6.dp)
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Download, contentDescription = "Export", modifier = Modifier.size(14.dp), tint = Color.White)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text("Export TXT", fontSize = 10.5.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Icon(imageVector = Icons.Default.Download, contentDescription = "Export", modifier = Modifier.size(13.dp), tint = Color.White)
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Text("Export TXT", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                }
+
+                OutlinedButton(
+                    onClick = { viewModel.writeCompanionTestLog() },
+                    modifier = Modifier.weight(0.85f),
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 3.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.BugReport, contentDescription = "Test Log", modifier = Modifier.size(13.dp), tint = colors.accentCyan)
+                    Spacer(modifier = Modifier.width(2.dp))
+                    Text("Test Log", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = colors.accentCyan)
                 }
 
                 OutlinedButton(
                     onClick = { viewModel.refreshCompanionLogs() },
-                    modifier = Modifier.weight(0.7f),
+                    modifier = Modifier.weight(0.65f),
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 3.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", modifier = Modifier.size(14.dp), tint = colors.accentGreen)
+                    Icon(imageVector = Icons.Default.Refresh, contentDescription = "Refresh", modifier = Modifier.size(13.dp), tint = colors.accentGreen)
                     Spacer(modifier = Modifier.width(2.dp))
-                    Text("Sync", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = colors.accentGreen)
+                    Text("Sync", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = colors.accentGreen)
                 }
 
                 OutlinedButton(
                     onClick = { viewModel.clearCompanionLogs() },
-                    modifier = Modifier.weight(0.7f),
+                    modifier = Modifier.weight(0.65f),
                     shape = RoundedCornerShape(12.dp),
-                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 4.dp)
+                    contentPadding = PaddingValues(vertical = 8.dp, horizontal = 3.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Clear", modifier = Modifier.size(14.dp), tint = colors.accentRose)
+                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Clear", modifier = Modifier.size(13.dp), tint = colors.accentRose)
                     Spacer(modifier = Modifier.width(2.dp))
-                    Text("Clear", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = colors.accentRose)
+                    Text("Clear", fontSize = 9.5.sp, fontWeight = FontWeight.Bold, color = colors.accentRose)
                 }
             }
 
             Spacer(modifier = Modifier.height(10.dp))
+
+            // Companion Self-Test Status Banner if available
+            if (uiState.companionSelfTestStatus != null) {
+                val isPass = uiState.companionSelfTestStatus.startsWith("PASSED")
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (isPass) colors.accentGreen.copy(alpha = 0.15f) else colors.accentRose.copy(alpha = 0.15f))
+                        .border(1.dp, if (isPass) colors.accentGreen.copy(alpha = 0.4f) else colors.accentRose.copy(alpha = 0.4f), RoundedCornerShape(10.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isPass) Icons.Default.CheckCircle else Icons.Default.Warning,
+                            contentDescription = if (isPass) "Passed" else "Failed",
+                            tint = if (isPass) colors.accentGreen else colors.accentRose,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Text(
+                            text = uiState.companionSelfTestStatus,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            color = if (isPass) colors.accentGreen else colors.accentRose
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
 
             // Companion Structured Log List
             Box(
@@ -1806,7 +1851,39 @@ fun SleekLogsTabContent(
                     .border(1.dp, if (colors.isDark) colors.glowColor else colors.border, RoundedCornerShape(16.dp))
                     .padding(12.dp)
             ) {
-                if (uiState.companionLogs.isEmpty()) {
+                if (uiState.companionLogError != null) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Text(
+                                text = "Companion log read failed:",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = colors.accentRose
+                            )
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                text = uiState.companionLogError,
+                                fontSize = 11.sp,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                color = colors.accentRose.copy(alpha = 0.9f),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            Text(
+                                text = "Ensure Quick Tile Companion is installed and granted access.",
+                                fontSize = 10.sp,
+                                color = colors.textMuted,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
+                    }
+                } else if (uiState.companionLogs.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center

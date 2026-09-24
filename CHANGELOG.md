@@ -6,6 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.8.7] - 2026-09-24
+
+### Bugfix Release: Persistent Package-Private Companion Diagnostic Pipeline & Zero-Daemon IPC
+
+#### Problem Analysis
+- **Companion Diagnostic Zero-Events Bug**:
+  - The Quick Tile Companion telemetry screen displayed "Received Events: 0" and `[ NO [TILE_PLUGIN] LOGS RECORDED YET ]` even after pulling down the Quick Settings shade or tapping the Sensors Off companion tile.
+  - Furthermore, when the ContentProvider query failed or encountered communication errors, the UI silently fell back to an empty list without indicating why logs could not be retrieved.
+
+#### Root Cause
+1. **Volatile In-Memory / SharedPreferences Lifetime Mismatch**:
+   - `TilePluginLog` previously stored entries only in memory and SharedPreferences asynchronously. When `TileService` was destroyed by system SystemUI unbinding, volatile buffers were lost or not synchronously committed before process termination.
+2. **Missing Synchronous File Persistence**:
+   - Diagnostic events were not written directly to a persistent, package-local file (`filesDir/tile_plugin.log`) within the companion app package space.
+3. **Silent Provider Error Reporting**:
+   - If the ContentProvider encountered missing permissions or provider unavailability, `SensorViewModel` swallowed the error and set `companionLogs = emptyList()`, misleadingly presenting 0 events.
+
+#### Code Changes
+- `core/src/main/java/com/example/TilePluginLog.kt`:
+  - Implemented direct synchronous disk persistence to `context.filesDir / "tile_plugin.log"`.
+  - Added bounded log file rotation (256 KB max) to maintain a lean storage footprint.
+  - Implemented mandatory first events and lifecycle loggers:
+    - `logCompanionProcessCreated` (`COMPANION_PROCESS_CREATED`) in `SensorsOffTileApp.onCreate()`
+    - `logTileServiceOnCreate` (`TILE_SERVICE_ON_CREATE`) in `SensorsOffTileService.onCreate()`
+    - `logTileServiceOnStartListening` (`TILE_SERVICE_ON_START_LISTENING`) in `SensorsOffTileService.onStartListening()`
+    - `logTileServiceOnClick` (`TILE_SERVICE_ON_CLICK`) in `SensorsOffTileService.onClick()`
+    - `logTileServiceOnStopListening` (`TILE_SERVICE_ON_STOP_LISTENING`) in `SensorsOffTileService.onStopListening()`
+    - `logTileServiceOnDestroy` (`TILE_SERVICE_ON_DESTROY`) in `SensorsOffTileService.onDestroy()`
+    - `logTestLogWrite` (`TEST_LOG_WRITE`)
+  - Added `fetchCompanionLogsWithResult` returning sealed `FetchResult` (`Success` vs `Error`) with explicit error messages and codes.
+  - Added `triggerCompanionTestLog(context)` to execute diagnostic test log writes across the IPC boundary.
+- `tile/src/main/java/com/example/tile/TilePluginLogProvider.kt`:
+  - Enforced strict caller UID authorization: rejects unknown/unauthorized callers with `SecurityException`, permitting strictly only the companion's own UID, `com.SensorsOff`, and `com.SensorsOff.tile`.
+  - Updated to read directly from the persistent package-local log file `filesDir/tile_plugin.log`.
+  - Added diagnostic `insert()` handler to write `TEST_LOG_WRITE` event to verify the logging and IPC pipeline independently of TileService.
+- `tile/src/main/java/com/example/tile/SensorsOffTileApp.kt`:
+  - Explicitly invokes `TilePluginLog.logCompanionProcessCreated` on process startup.
+- `tile/src/main/java/com/example/tile/SensorsOffTileService.kt`:
+  - Fully bound lifecycle methods (`onCreate`, `onStartListening`, `onClick`, `onStopListening`, `onDestroy`) to synchronous persistent log writers.
+- `app/src/main/java/com/example/SensorViewModel.kt`:
+  - Added `companionLogError` and `companionSelfTestStatus` to `SensorUiState`.
+  - Implemented end-to-end companion self-test validation in `writeCompanionTestLog()`, verifying synchronous insert, immediate query, and presence of `TEST_LOG_WRITE`.
+- `app/src/main/java/com/example/MainActivity.kt`:
+  - Added "Test Log" action button and visual self-test status banner in the Companion Telemetry tab.
+- `app/src/test/java/com/example/TilePluginLogIpcTest.kt`:
+  - Added full test suite exercising persistent file logging, lifecycle persistence, ContentProvider IPC, error state discrimination, and self-test roundtrip validation.
+
+#### Telemetry & Verification
+- Unit & Build Verification: Successfully built and compiled with 0 errors across all modules.
+- Verification: 100% on-demand synchronous file logging with 0 background services, 0 polling, and 0 daemons.
+
+---
+
 ## [2.8.6] - 2026-09-24
 
 ### Feature Release: Dual-Source Telemetry System & Process-Isolated Companion Diagnostics

@@ -5,22 +5,59 @@ import android.content.ContentValues
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
+import android.os.Binder
+import android.os.Process
+import android.util.Log
 import com.example.TilePluginLog
 import org.json.JSONObject
 
 /**
  * Lightweight ContentProvider in the Quick Tile Companion APK (:tile).
- * Allows the main SensorsOff app to query dedicated [TILE_PLUGIN] logs on-demand.
+ * Application ID: com.SensorsOff.tile
+ * Authority: com.SensorsOff.tile.logprovider
+ *
+ * Reads persistent log file ("tile_plugin.log") directly on-demand.
+ * Restricted to caller verification (calling UID matching same user / SensorsOff package).
  *
  * Characteristics:
- * - On-demand query execution (zero background threads or services)
- * - Safe read-only log serving
+ * - Direct read of persistent package-local log file
+ * - Zero background threads or services
+ * - Safe on-demand serving
+ * - Test Log insertion trigger for verifying IPC pipeline
  */
 class TilePluginLogProvider : ContentProvider() {
 
     override fun onCreate(): Boolean {
         context?.let { TilePluginLog.initialize(it) }
         return true
+    }
+
+    private fun checkCallingPermission(): Boolean {
+        val ctx = context ?: return false
+        val callingUid = Binder.getCallingUid()
+
+        // Allow own process / companion's own UID
+        if (callingUid == Process.myUid()) {
+            return true
+        }
+
+        // Verify package associated with calling UID
+        try {
+            val pm = ctx.packageManager
+            val packages = pm.getPackagesForUid(callingUid)
+            if (packages != null) {
+                for (pkg in packages) {
+                    if (pkg == TilePluginLog.MAIN_APP_PACKAGE || pkg == TilePluginLog.COMPANION_PACKAGE) {
+                        return true
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("TilePluginLogProvider", "Caller UID verification error: ${e.message}")
+        }
+
+        // Reject all other callers
+        return false
     }
 
     override fun query(
@@ -31,11 +68,15 @@ class TilePluginLogProvider : ContentProvider() {
         sortOrder: String?
     ): Cursor {
         val ctx = context ?: return MatrixCursor(COLUMNS)
-        TilePluginLog.initialize(ctx)
+        if (!checkCallingPermission()) {
+            throw SecurityException("Unauthorized access to companion log provider")
+        }
+
+        // Read directly from the persistent package-private file
+        val entries = TilePluginLog.readPersistentLogEntries(ctx)
 
         val cursor = MatrixCursor(COLUMNS)
-        val logs = TilePluginLog.logsFlow.value
-        for (entry in logs) {
+        for (entry in entries) {
             val fieldsJson = JSONObject().apply {
                 for ((k, v) in entry.fields) {
                     put(k, v)
@@ -60,14 +101,25 @@ class TilePluginLogProvider : ContentProvider() {
 
     override fun getType(uri: Uri): String = "vnd.android.cursor.dir/vnd.sensorsoff.tile.log"
 
-    override fun insert(uri: Uri, values: ContentValues?): Uri? = null
+    override fun insert(uri: Uri, values: ContentValues?): Uri? {
+        val ctx = context ?: return null
+        if (!checkCallingPermission()) {
+            throw SecurityException("Unauthorized access to companion log provider")
+        }
+
+        // Diagnostic action: Write Test Log
+        TilePluginLog.logTestLogWrite(ctx)
+        return Uri.withAppendedPath(TilePluginLog.LOG_PROVIDER_URI, "test_log_written")
+    }
 
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
-        context?.let {
-            TilePluginLog.clear(it)
-            return 1
+        val ctx = context ?: return 0
+        if (!checkCallingPermission()) {
+            throw SecurityException("Unauthorized access to companion log provider")
         }
-        return 0
+
+        TilePluginLog.clear(ctx)
+        return 1
     }
 
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0

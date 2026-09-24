@@ -60,6 +60,8 @@ data class SensorUiState(
     val selectedTimeMode: TimeDisplayMode = TimeDisplayMode.EXACT,
     val logs: List<String> = emptyList(),
     val companionLogs: List<TilePluginLog.Entry> = emptyList(),
+    val companionLogError: String? = null,
+    val companionSelfTestStatus: String? = null,
     val tileSettings: TileSettingsState = TileSettingsState(),
     val showExperimentalToggles: Boolean = false,
     val isTileCompanionInstalled: Boolean = false,
@@ -459,8 +461,44 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
     fun refreshCompanionLogs() {
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>().applicationContext
-            val entries = TilePluginLog.fetchCompanionLogs(context)
-            _uiState.update { it.copy(companionLogs = entries) }
+            when (val result = TilePluginLog.fetchCompanionLogsWithResult(context)) {
+                is TilePluginLog.FetchResult.Success -> {
+                    _uiState.update { it.copy(companionLogs = result.entries, companionLogError = null) }
+                }
+                is TilePluginLog.FetchResult.Error -> {
+                    _uiState.update { it.copy(companionLogs = emptyList(), companionLogError = "${result.code}: ${result.message}") }
+                }
+            }
+        }
+    }
+
+    fun writeCompanionTestLog() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>().applicationContext
+            val testResult = TilePluginLog.performCompanionSelfTest(context)
+            when (testResult) {
+                is TilePluginLog.SelfTestResult.Success -> {
+                    val statusMsg = "Self-Test PASSED: TEST_LOG_WRITE written synchronously to disk & retrieved via Provider (ID: ${testResult.testEntry.id}, PID: ${testResult.testEntry.pid})"
+                    addLog(statusMsg, category = LogCategory.TILE, level = LogLevel.SUCCESS)
+                    _uiState.update { it.copy(companionSelfTestStatus = "PASSED: TEST_LOG_WRITE verified (${testResult.totalEntries} entries in log)") }
+                    refreshCompanionLogs()
+                }
+                is TilePluginLog.SelfTestResult.InsertFailed -> {
+                    val statusMsg = "Self-Test FAILED at insert stage: ${testResult.error}"
+                    addLog(statusMsg, category = LogCategory.TILE, level = LogLevel.ERROR)
+                    _uiState.update { it.copy(companionSelfTestStatus = "FAILED (Insert): ${testResult.error}") }
+                }
+                is TilePluginLog.SelfTestResult.QueryFailedAfterInsert -> {
+                    val statusMsg = "Self-Test FAILED: Insertion succeeded but subsequent query failed: ${testResult.error}"
+                    addLog(statusMsg, category = LogCategory.TILE, level = LogLevel.ERROR)
+                    _uiState.update { it.copy(companionSelfTestStatus = "FAILED (Query): ${testResult.error}") }
+                }
+                is TilePluginLog.SelfTestResult.TestEventMissing -> {
+                    val statusMsg = "Self-Test FAILED: Provider returned ${testResult.returnedCount} entries, but TEST_LOG_WRITE was missing"
+                    addLog(statusMsg, category = LogCategory.TILE, level = LogLevel.ERROR)
+                    _uiState.update { it.copy(companionSelfTestStatus = "FAILED: TEST_LOG_WRITE not found in query results (${testResult.returnedCount} entries returned)") }
+                }
+            }
         }
     }
 
@@ -472,7 +510,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             } catch (e: Exception) {
                 TilePluginLog.clear(context)
             }
-            _uiState.update { it.copy(companionLogs = emptyList()) }
+            _uiState.update { it.copy(companionLogs = emptyList(), companionLogError = null) }
             refreshCompanionLogs()
         }
     }

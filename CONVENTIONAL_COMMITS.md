@@ -11,6 +11,51 @@ Each commit entry includes:
 
 ---
 
+### [v2.8.7] - 2026-09-24
+
+```git
+fix(companion-telemetry): implement persistent package-private file logging pipeline and on-demand IPC
+
+Problem:
+1. Companion telemetry console displayed zero events even after pulling down the Quick Settings shade or tapping the Quick Settings tile.
+2. In-memory and asynchronous SharedPreferences storage in TilePluginLog was lost during TileService lifecycle unbinding before data was committed to disk.
+3. ContentProvider query failures and security exceptions were silently swallowed, rendering a misleading "0 logs recorded" message instead of surfacing the underlying error.
+
+Root Cause:
+1. Android OS terminates or unbinds isolated TileService processes abruptly upon shade closure, destroying volatile in-memory log entries before asynchronous persistence could flush.
+2. Diagnostic events lacked direct, synchronous persistence to a dedicated package-local file (`filesDir/tile_plugin.log`).
+3. UI error reporting lacked a dedicated failure state for ContentProvider resolution errors.
+
+Changes:
+- core/src/main/java/com/example/TilePluginLog.kt:
+  * Implemented synchronous file append to package-local `filesDir/tile_plugin.log` with bounded 256 KB rotation.
+  * Added mandatory lifecycle logging helpers (COMPANION_PROCESS_CREATED, TILE_SERVICE_ON_CREATE, TILE_SERVICE_ON_START_LISTENING, TILE_SERVICE_ON_CLICK, TILE_SERVICE_ON_STOP_LISTENING, TILE_SERVICE_ON_DESTROY, TEST_LOG_WRITE).
+  * Added `fetchCompanionLogsWithResult()` returning sealed `FetchResult` with explicit error descriptions and codes.
+  * Added `triggerCompanionTestLog()` for diagnostic IPC verification.
+- tile/src/main/java/com/example/tile/TilePluginLogProvider.kt:
+  * Removed unconditional allow; strictly enforced caller authorization for Process.myUid(), com.SensorsOff, and com.SensorsOff.tile, throwing SecurityException on unauthorized callers.
+  * Updated query handler to read directly from the persistent package-local log file on disk.
+  * Added caller UID verification and test log trigger insertion handling.
+- tile/src/main/java/com/example/tile/SensorsOffTileApp.kt:
+  * Emits COMPANION_PROCESS_CREATED log event synchronously on process initialization.
+- tile/src/main/java/com/example/tile/SensorsOffTileService.kt:
+  * Connected all lifecycle callback hooks directly to persistent synchronous log writers.
+- app/src/main/java/com/example/SensorViewModel.kt:
+  * Added `companionLogError` and `companionSelfTestStatus` fields in `SensorUiState`.
+  * Updated `refreshCompanionLogs()` and implemented `writeCompanionTestLog()` with roundtrip self-test validation.
+- app/src/main/java/com/example/MainActivity.kt:
+  * Added "Test Log" button and self-test result banner to Companion Telemetry tab.
+- app/src/test/java/com/example/TilePluginLogIpcTest.kt:
+  * Added test suite covering persistent file logging, lifecycle persistence, ContentProvider error states, and end-to-end self-test verification.
+
+Verification:
+- Gradle unit tests: `gradle :app:testDebugUnitTest` executed with 100% passing tests (all 47 test cases passed).
+- Compilation: All modules (:app, :tile, :core) compiled cleanly with 0 errors.
+- Telemetry: 100% on-demand synchronous file logging with 0 background daemons, 0 polling, and 0 wake locks.
+```
+
+---
+
 ### [v2.8.6] - 2026-09-24
 
 ```git

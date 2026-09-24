@@ -72,7 +72,7 @@ class SensorsOffTileService : TileService() {
     override fun onCreate() {
         super.onCreate()
         TilePluginLog.initialize(applicationContext)
-        TilePluginLog.logLifecycle(applicationContext, "TileService.onCreate")
+        TilePluginLog.logTileServiceOnCreate(applicationContext)
         TileLogManager.initialize(applicationContext)
         ShizukuManager.initialize(applicationContext)
         reloadVisualConfig()
@@ -201,7 +201,7 @@ class SensorsOffTileService : TileService() {
 
     override fun onDestroy() {
         super.onDestroy()
-        TilePluginLog.logLifecycle(applicationContext, "TileService.onDestroy")
+        TilePluginLog.logTileServiceOnDestroy(applicationContext)
         try {
             contentResolver.unregisterContentObserver(settingsObserver)
         } catch (e: Exception) {
@@ -300,7 +300,7 @@ class SensorsOffTileService : TileService() {
         listeningJob?.cancel()
 
         val pid = android.os.Process.myPid()
-        TilePluginLog.logLifecycle(applicationContext, "TileService.onStartListening", "Instance=$instanceId")
+        TilePluginLog.logTileServiceOnStartListening(applicationContext, "Instance=$instanceId")
         TileLogManager.logLifecycleEvent(
             applicationContext,
             "CompanionTileService",
@@ -434,7 +434,7 @@ class SensorsOffTileService : TileService() {
 
     override fun onStopListening() {
         super.onStopListening()
-        TilePluginLog.logLifecycle(applicationContext, "TileService.onStopListening")
+        TilePluginLog.logTileServiceOnStopListening(applicationContext)
         TileLogManager.logLifecycleEvent(
             applicationContext,
             "CompanionTileService",
@@ -472,7 +472,7 @@ class SensorsOffTileService : TileService() {
         ShizukuManager.initialize(applicationContext)
         reloadVisualConfig()
 
-        TilePluginLog.logLifecycle(applicationContext, "TileService.onClick")
+        TilePluginLog.logTileServiceOnClick(applicationContext)
         TileLogManager.logLifecycleEvent(
             applicationContext,
             "CompanionTileService",

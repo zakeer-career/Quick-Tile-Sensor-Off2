@@ -12,6 +12,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -23,27 +26,35 @@ import java.util.concurrent.atomic.AtomicLong
  *
  * Distinct Prefix: [TILE_PLUGIN]
  * Features:
- * - Zero background daemons, zero polling, zero keep-alives
- * - Complete companion TileService lifecycle tracing
- * - Granular Shizuku and Sensor Privacy Binder diagnostics
- * - Authoritative hardware state read and toggle verification tracing
- * - Explicit categorization of UNKNOWN state reasons
- * - Bounded local persistence surviving TileService recreation
+ * - Direct, synchronous append to a persistent package-private file ("tile_plugin.log")
+ * - Bounded log retention with automatic size rotation (survives TileService destruction)
+ * - Complete companion TileService lifecycle tracing:
+ *     - COMPANION_PROCESS_CREATED
+ *     - TILE_SERVICE_ON_CREATE
+ *     - TILE_SERVICE_ON_START_LISTENING
+ *     - TILE_SERVICE_ON_CLICK
+ *     - TILE_SERVICE_ON_STOP_LISTENING
+ *     - TILE_SERVICE_ON_DESTROY
+ *     - TEST_LOG_WRITE
+ * - Safe on-demand IPC via TilePluginLogProvider for com.SensorsOff
+ * - Zero background daemons, zero polling, zero wake locks, zero persistent services
  */
 object TilePluginLog {
 
     const val TAG = "TILE_PLUGIN"
     const val COMPANION_PACKAGE = "com.SensorsOff.tile"
+    const val MAIN_APP_PACKAGE = "com.SensorsOff"
     const val LOG_PROVIDER_AUTHORITY = "com.SensorsOff.tile.logprovider"
     val LOG_PROVIDER_URI: Uri = Uri.parse("content://$LOG_PROVIDER_AUTHORITY/logs")
+    val TEST_LOG_URI: Uri = Uri.parse("content://$LOG_PROVIDER_AUTHORITY/test_log")
 
-    private const val PREFS_NAME = "tile_companion_plugin_logs"
-    private const val KEY_PERSISTED_ENTRIES = "persisted_companion_entries"
-    private const val MAX_LOGS = 100
+    const val LOG_FILE_NAME = "tile_plugin.log"
+    private const val MAX_LOG_FILE_BYTES = 256 * 1024L // 256 KB max
+    private const val MAX_IN_MEMORY_ENTRIES = 200
 
     private val idCounter = AtomicLong(System.currentTimeMillis())
     private val timeFormat = ThreadLocal.withInitial { SimpleDateFormat("HH:mm:ss.SSS", Locale.US) }
-    private val fullDateFormat = ThreadLocal.withInitial { SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US) }
+    private val fullDateFormat = ThreadLocal.withInitial { SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US) }
 
     val pid: Int = Process.myPid()
 
@@ -65,11 +76,17 @@ object TilePluginLog {
         val rawMessage: String
     ) {
         fun toFormattedBlock(): String {
+            val isoTime = try {
+                fullDateFormat.get()?.format(Date(timestamp)) ?: formattedTime
+            } catch (e: Exception) {
+                formattedTime
+            }
             return buildString {
+                appendLine(isoTime)
                 appendLine("[TILE_PLUGIN]")
-                appendLine("event=$event")
                 appendLine("session=$session")
                 appendLine("pid=$pid")
+                appendLine("event=$event")
                 appendLine("thread=$thread")
                 appendLine("time=$formattedTime")
                 for ((k, v) in fields) {
@@ -82,45 +99,44 @@ object TilePluginLog {
             val extra = fields.entries.joinToString(" ") { "${it.key}=${it.value}" }
             return "[TILE_PLUGIN] [$formattedTime] session=$session pid=$pid thread=$thread event=$event $extra".trim()
         }
-    }
 
-    private val _logsFlow = MutableStateFlow<List<Entry>>(emptyList())
-    val logsFlow: StateFlow<List<Entry>> = _logsFlow.asStateFlow()
+        fun toJsonString(): String {
+            val json = JSONObject()
+            json.put("id", id)
+            json.put("ts", timestamp)
+            json.put("time", formattedTime)
+            json.put("event", event)
+            json.put("pid", pid)
+            json.put("thread", thread)
+            json.put("session", session)
+            val fieldsJson = JSONObject()
+            for ((k, v) in fields) {
+                fieldsJson.put(k, v)
+            }
+            json.put("fields", fieldsJson)
+            return json.toString()
+        }
 
-    private var isInitialized = false
-
-    fun initialize(context: Context) {
-        if (isInitialized) return
-        isInitialized = true
-        loadFromPrefs(context)
-    }
-
-    private fun loadFromPrefs(context: Context) {
-        try {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val jsonStr = prefs.getString(KEY_PERSISTED_ENTRIES, null) ?: return
-            val array = JSONArray(jsonStr)
-            val list = mutableListOf<Entry>()
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                val id = obj.optLong("id", System.currentTimeMillis())
-                val ts = obj.optLong("timestamp", System.currentTimeMillis())
-                val time = obj.optString("time", timeFormat.get()?.format(Date(ts)) ?: "")
-                val event = obj.optString("event", "unknown")
-                val p = obj.optInt("pid", pid)
-                val thread = obj.optString("thread", "main")
-                val sess = obj.optString("session", sessionId)
-                val raw = obj.optString("raw", "")
-                val fieldsObj = obj.optJSONObject("fields")
-                val fieldsMap = mutableMapOf<String, String>()
-                if (fieldsObj != null) {
-                    val keys = fieldsObj.keys()
-                    while (keys.hasNext()) {
-                        val key = keys.next()
-                        fieldsMap[key] = fieldsObj.getString(key)
+        companion object {
+            fun fromJsonString(jsonStr: String): Entry? {
+                return try {
+                    val obj = JSONObject(jsonStr)
+                    val id = obj.optLong("id", 0L)
+                    val ts = obj.optLong("ts", 0L)
+                    val time = obj.optString("time", "")
+                    val event = obj.optString("event", "UNKNOWN")
+                    val p = obj.optInt("pid", 0)
+                    val thread = obj.optString("thread", "main")
+                    val session = obj.optString("session", "")
+                    val fieldsObj = obj.optJSONObject("fields")
+                    val fieldsMap = mutableMapOf<String, String>()
+                    if (fieldsObj != null) {
+                        val keys = fieldsObj.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            fieldsMap[k] = fieldsObj.getString(k)
+                        }
                     }
-                }
-                list.add(
                     Entry(
                         id = id,
                         timestamp = ts,
@@ -128,46 +144,68 @@ object TilePluginLog {
                         event = event,
                         pid = p,
                         thread = thread,
-                        session = sess,
+                        session = session,
                         fields = fieldsMap,
-                        rawMessage = raw
+                        rawMessage = ""
                     )
-                )
-            }
-            _logsFlow.value = list
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to load companion logs: ${e.message}")
-        }
-    }
-
-    private fun saveToPrefs(context: Context, entries: List<Entry>) {
-        try {
-            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val array = JSONArray()
-            for (entry in entries.take(MAX_LOGS)) {
-                val obj = JSONObject().apply {
-                    put("id", entry.id)
-                    put("timestamp", entry.timestamp)
-                    put("time", entry.formattedTime)
-                    put("event", entry.event)
-                    put("pid", entry.pid)
-                    put("thread", entry.thread)
-                    put("session", entry.session)
-                    put("raw", entry.rawMessage)
-                    val fieldsObj = JSONObject()
-                    for ((k, v) in entry.fields) {
-                        fieldsObj.put(k, v)
-                    }
-                    put("fields", fieldsObj)
+                } catch (e: Exception) {
+                    null
                 }
-                array.put(obj)
             }
-            prefs.edit().putString(KEY_PERSISTED_ENTRIES, array.toString()).apply()
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed to persist companion logs: ${e.message}")
         }
     }
 
+    private val _logsFlow = MutableStateFlow<List<Entry>>(emptyList())
+    val logsFlow: StateFlow<List<Entry>> = _logsFlow.asStateFlow()
+
+    private val fileLock = Any()
+    @Volatile private var isInitialized = false
+
+    fun getLogFile(context: Context): File {
+        return File(context.filesDir, LOG_FILE_NAME)
+    }
+
+    fun initialize(context: Context) {
+        if (isInitialized) return
+        synchronized(fileLock) {
+            if (isInitialized) return
+            isInitialized = true
+            loadEntriesFromFile(context)
+        }
+    }
+
+    private fun loadEntriesFromFile(context: Context): List<Entry> {
+        val file = getLogFile(context)
+        if (!file.exists()) {
+            _logsFlow.value = emptyList()
+            return emptyList()
+        }
+
+        val entries = mutableListOf<Entry>()
+        try {
+            file.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    val trimmed = line.trim()
+                    if (trimmed.isNotEmpty()) {
+                        val entry = Entry.fromJsonString(trimmed)
+                        if (entry != null) {
+                            entries.add(entry)
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed reading log file: ${e.message}")
+        }
+
+        val reversed = entries.reversed().take(MAX_IN_MEMORY_ENTRIES)
+        _logsFlow.value = reversed
+        return reversed
+    }
+
+    /**
+     * Appends an entry directly and synchronously to context.filesDir / "tile_plugin.log"
+     */
     @Synchronized
     fun logEvent(
         context: Context,
@@ -193,20 +231,118 @@ object TilePluginLog {
         val block = entry.toFormattedBlock()
         Log.i(TAG, "\n$block")
 
-        val updated = (listOf(entry) + _logsFlow.value).take(MAX_LOGS)
+        // 1. Synchronously append to persistent file
+        synchronized(fileLock) {
+            try {
+                val file = getLogFile(context)
+                val parent = file.parentFile
+                if (parent != null && !parent.exists()) {
+                    parent.mkdirs()
+                }
+
+                // Check size rotation
+                if (file.exists() && file.length() > MAX_LOG_FILE_BYTES) {
+                    rotateLogFile(file)
+                }
+
+                FileOutputStream(file, true).bufferedWriter().use { writer ->
+                    writer.write(entry.toJsonString())
+                    writer.newLine()
+                    writer.flush()
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error writing to persistent companion log file: ${e.message}", e)
+            }
+        }
+
+        // 2. Update memory state flow
+        val updated = (listOf(entry) + _logsFlow.value).take(MAX_IN_MEMORY_ENTRIES)
         _logsFlow.value = updated
-        saveToPrefs(context, updated)
     }
 
-    // 2. Lifecycle Events
-    fun logProcessStart(context: Context, source: String = "Application.onCreate") {
+    private fun rotateLogFile(file: File) {
+        try {
+            val lines = file.readLines()
+            val keep = lines.takeLast(lines.size / 2)
+            file.bufferedWriter().use { writer ->
+                for (l in keep) {
+                    writer.write(l)
+                    writer.newLine()
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Log rotation note: ${e.message}")
+        }
+    }
+
+    // ==========================================
+    // MANDATORY FIRST EVENTS & LIFECYCLE LOGS
+    // ==========================================
+
+    fun logCompanionProcessCreated(context: Context, source: String = "SensorsOffTileApp.onCreate") {
         logEvent(
-            context,
-            "process_start",
-            mapOf(
+            context = context,
+            event = "COMPANION_PROCESS_CREATED",
+            fields = mapOf(
                 "source" to source,
                 "api" to Build.VERSION.SDK_INT.toString(),
-                "device" to "${Build.MANUFACTURER} ${Build.MODEL}"
+                "device" to "${Build.MANUFACTURER} ${Build.MODEL}",
+                "package" to COMPANION_PACKAGE
+            )
+        )
+    }
+
+    fun logTileServiceOnCreate(context: Context) {
+        logEvent(
+            context = context,
+            event = "TILE_SERVICE_ON_CREATE",
+            fields = mapOf(
+                "class" to "SensorsOffTileService"
+            )
+        )
+    }
+
+    fun logTileServiceOnStartListening(context: Context, extraDetail: String = "") {
+        val fields = mutableMapOf(
+            "class" to "SensorsOffTileService"
+        )
+        if (extraDetail.isNotBlank()) {
+            fields["detail"] = extraDetail
+        }
+        logEvent(
+            context = context,
+            event = "TILE_SERVICE_ON_START_LISTENING",
+            fields = fields
+        )
+    }
+
+    fun logTileServiceOnClick(context: Context) {
+        logEvent(
+            context = context,
+            event = "TILE_SERVICE_ON_CLICK",
+            fields = mapOf(
+                "class" to "SensorsOffTileService",
+                "action" to "USER_TAP"
+            )
+        )
+    }
+
+    fun logTileServiceOnStopListening(context: Context) {
+        logEvent(
+            context = context,
+            event = "TILE_SERVICE_ON_STOP_LISTENING",
+            fields = mapOf(
+                "class" to "SensorsOffTileService"
+            )
+        )
+    }
+
+    fun logTileServiceOnDestroy(context: Context) {
+        logEvent(
+            context = context,
+            event = "TILE_SERVICE_ON_DESTROY",
+            fields = mapOf(
+                "class" to "SensorsOffTileService"
             )
         )
     }
@@ -219,7 +355,38 @@ object TilePluginLog {
         logEvent(context, eventName, fields)
     }
 
-    // 3. Shizuku Diagnostics
+    fun logTileClick(context: Context, currentState: String, requestedState: String) {
+        logEvent(
+            context,
+            "tile_click",
+            mapOf(
+                "currentState" to currentState,
+                "requestedState" to requestedState
+            )
+        )
+    }
+
+    fun logTestLogWrite(context: Context) {
+        val isoTime = try {
+            fullDateFormat.get()?.format(Date()) ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        logEvent(
+            context = context,
+            event = "TEST_LOG_WRITE",
+            fields = mapOf(
+                "timestamp" to isoTime,
+                "triggeredBy" to "DIAGNOSTIC_TEST",
+                "verified" to "TRUE"
+            )
+        )
+    }
+
+    // ==========================================
+    // DIAGNOSTIC EVENT LOGGING (SHIZUKU/BINDER/TOGGLE)
+    // ==========================================
+
     fun logShizukuCheck(
         context: Context,
         running: Boolean,
@@ -242,7 +409,6 @@ object TilePluginLog {
         )
     }
 
-    // 4. Sensor Privacy Binder Diagnostics
     fun logSensorPrivacyBinder(
         context: Context,
         result: String,
@@ -268,7 +434,6 @@ object TilePluginLog {
         )
     }
 
-    // 5. Authoritative State Read Diagnostics
     fun logAuthoritativeStateRead(
         context: Context,
         attempt: Int,
@@ -298,18 +463,6 @@ object TilePluginLog {
         logEvent(context, "authoritative_state_read", fields)
     }
 
-    // 6. Toggle Diagnostics
-    fun logTileClick(context: Context, currentState: String, requestedState: String) {
-        logEvent(
-            context,
-            "tile_click",
-            mapOf(
-                "currentState" to currentState,
-                "requestedState" to requestedState
-            )
-        )
-    }
-
     fun logToggle(
         context: Context,
         currentState: String,
@@ -336,7 +489,6 @@ object TilePluginLog {
         logEvent(context, "toggle", fields)
     }
 
-    // 7. Explicit State Unknown Reason
     fun logStateUnknown(
         context: Context,
         reason: String,
@@ -347,7 +499,6 @@ object TilePluginLog {
         logEvent(context, "state_unknown", fields)
     }
 
-    // 8. Tile UI Update
     fun logTileUpdate(
         context: Context,
         tileState: Int,
@@ -373,18 +524,42 @@ object TilePluginLog {
     }
 
     fun clear(context: Context) {
+        synchronized(fileLock) {
+            try {
+                val file = getLogFile(context)
+                if (file.exists()) {
+                    file.delete()
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed deleting log file: ${e.message}")
+            }
+        }
         _logsFlow.value = emptyList()
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().remove(KEY_PERSISTED_ENTRIES).apply()
-        logEvent(context, "logs_cleared", mapOf("reason" to "USER_REQUEST"))
+        logEvent(context, "LOGS_CLEARED", mapOf("reason" to "USER_REQUEST"))
+    }
+
+    /**
+     * Direct query reading persistent log entries from the companion file for Provider usage.
+     */
+    fun readPersistentLogEntries(context: Context): List<Entry> {
+        synchronized(fileLock) {
+            return loadEntriesFromFile(context)
+        }
+    }
+
+    /**
+     * Result of fetching companion logs from ContentProvider.
+     */
+    sealed class FetchResult {
+        data class Success(val entries: List<Entry>) : FetchResult()
+        data class Error(val code: String, val message: String) : FetchResult()
     }
 
     /**
      * Retrieves companion logs from the ContentProvider if running in main app,
-     * or from local storage if running in companion.
+     * with explicit error categorization.
      */
-    fun fetchCompanionLogs(context: Context): List<Entry> {
-        // Try querying companion ContentProvider
+    fun fetchCompanionLogsWithResult(context: Context): FetchResult {
         try {
             val cursor = context.contentResolver.query(
                 LOG_PROVIDER_URI,
@@ -392,65 +567,131 @@ object TilePluginLog {
                 null,
                 null,
                 null
-            )
-            if (cursor != null) {
-                cursor.use { c ->
-                    val list = mutableListOf<Entry>()
-                    val colId = c.getColumnIndex("id")
-                    val colTs = c.getColumnIndex("timestamp")
-                    val colTime = c.getColumnIndex("time")
-                    val colEvent = c.getColumnIndex("event")
-                    val colPid = c.getColumnIndex("pid")
-                    val colThread = c.getColumnIndex("thread")
-                    val colSession = c.getColumnIndex("session")
-                    val colFields = c.getColumnIndex("fields")
+            ) ?: return FetchResult.Error("PROVIDER_UNAVAILABLE", "ContentProvider query returned null cursor (Companion not installed or provider not found)")
 
-                    while (c.moveToNext()) {
-                        val id = if (colId >= 0) c.getLong(colId) else 0L
-                        val ts = if (colTs >= 0) c.getLong(colTs) else 0L
-                        val time = if (colTime >= 0) c.getString(colTime) else ""
-                        val event = if (colEvent >= 0) c.getString(colEvent) else ""
-                        val p = if (colPid >= 0) c.getInt(colPid) else 0
-                        val thread = if (colThread >= 0) c.getString(colThread) else ""
-                        val sess = if (colSession >= 0) c.getString(colSession) else ""
-                        val fieldsJson = if (colFields >= 0) c.getString(colFields) else null
+            cursor.use { c ->
+                val list = mutableListOf<Entry>()
+                val colId = c.getColumnIndex("id")
+                val colTs = c.getColumnIndex("timestamp")
+                val colTime = c.getColumnIndex("time")
+                val colEvent = c.getColumnIndex("event")
+                val colPid = c.getColumnIndex("pid")
+                val colThread = c.getColumnIndex("thread")
+                val colSession = c.getColumnIndex("session")
+                val colFields = c.getColumnIndex("fields")
 
-                        val fieldsMap = mutableMapOf<String, String>()
-                        if (!fieldsJson.isNullOrBlank()) {
-                            val fObj = JSONObject(fieldsJson)
-                            val keys = fObj.keys()
-                            while (keys.hasNext()) {
-                                val k = keys.next()
-                                fieldsMap[k] = fObj.getString(k)
-                            }
+                while (c.moveToNext()) {
+                    val id = if (colId >= 0) c.getLong(colId) else 0L
+                    val ts = if (colTs >= 0) c.getLong(colTs) else 0L
+                    val time = if (colTime >= 0) c.getString(colTime) else ""
+                    val event = if (colEvent >= 0) c.getString(colEvent) else ""
+                    val p = if (colPid >= 0) c.getInt(colPid) else 0
+                    val thread = if (colThread >= 0) c.getString(colThread) else ""
+                    val sess = if (colSession >= 0) c.getString(colSession) else ""
+                    val fieldsJson = if (colFields >= 0) c.getString(colFields) else null
+
+                    val fieldsMap = mutableMapOf<String, String>()
+                    if (!fieldsJson.isNullOrBlank()) {
+                        val fObj = JSONObject(fieldsJson)
+                        val keys = fObj.keys()
+                        while (keys.hasNext()) {
+                            val k = keys.next()
+                            fieldsMap[k] = fObj.getString(k)
                         }
+                    }
 
-                        list.add(
-                            Entry(
-                                id = id,
-                                timestamp = ts,
-                                formattedTime = time,
-                                event = event,
-                                pid = p,
-                                thread = thread,
-                                session = sess,
-                                fields = fieldsMap,
-                                rawMessage = ""
-                            )
+                    list.add(
+                        Entry(
+                            id = id,
+                            timestamp = ts,
+                            formattedTime = time,
+                            event = event,
+                            pid = p,
+                            thread = thread,
+                            session = sess,
+                            fields = fieldsMap,
+                            rawMessage = ""
                         )
-                    }
-                    if (list.isNotEmpty()) {
-                        return list
-                    }
+                    )
                 }
+                return FetchResult.Success(list)
             }
+        } catch (e: SecurityException) {
+            Log.e(TAG, "ContentProvider SecurityException: ${e.message}")
+            return FetchResult.Error("SECURITY_ERROR", "Permission denied accessing companion provider: ${e.message}")
         } catch (e: Exception) {
-            Log.d(TAG, "ContentProvider query note: ${e.message}")
+            Log.e(TAG, "ContentProvider query error: ${e.message}")
+            return FetchResult.Error("PROVIDER_ERROR", e.message ?: "Unknown error querying companion provider")
+        }
+    }
+
+    /**
+     * Backward-compatible fetch function returning List<Entry>.
+     */
+    fun fetchCompanionLogs(context: Context): List<Entry> {
+        return when (val result = fetchCompanionLogsWithResult(context)) {
+            is FetchResult.Success -> result.entries
+            is FetchResult.Error -> emptyList()
+        }
+    }
+
+    /**
+     * Result of companion self-test execution.
+     */
+    sealed class SelfTestResult {
+        data class Success(val testEntry: Entry, val totalEntries: Int) : SelfTestResult()
+        data class InsertFailed(val error: String) : SelfTestResult()
+        data class QueryFailedAfterInsert(val error: String) : SelfTestResult()
+        data class TestEventMissing(val returnedCount: Int) : SelfTestResult()
+    }
+
+    /**
+     * Executes an explicit end-to-end companion self-test:
+     * 1. Calls companion ContentProvider insert (TEST_LOG_URI)
+     * 2. Companion writes TEST_LOG_WRITE synchronously to disk
+     * 3. Immediately queries the provider via fetchCompanionLogsWithResult()
+     * 4. Verifies TEST_LOG_WRITE event is present in the returned list
+     */
+    fun performCompanionSelfTest(context: Context): SelfTestResult {
+        val insertedUri = try {
+            context.contentResolver.insert(TEST_LOG_URI, null)
+        } catch (e: SecurityException) {
+            return SelfTestResult.InsertFailed("SECURITY_ERROR: ${e.message}")
+        } catch (e: Exception) {
+            return SelfTestResult.InsertFailed("PROVIDER_ERROR: ${e.message ?: "Insert failed"}")
         }
 
-        // Fallback to local memory / preferences
-        initialize(context)
-        return _logsFlow.value
+        if (insertedUri == null) {
+            return SelfTestResult.InsertFailed("Provider returned null URI (Companion not installed or provider inactive)")
+        }
+
+        val fetchResult = fetchCompanionLogsWithResult(context)
+        when (fetchResult) {
+            is FetchResult.Error -> {
+                return SelfTestResult.QueryFailedAfterInsert("${fetchResult.code}: ${fetchResult.message}")
+            }
+            is FetchResult.Success -> {
+                val testEntry = fetchResult.entries.firstOrNull { it.event == "TEST_LOG_WRITE" }
+                return if (testEntry != null) {
+                    SelfTestResult.Success(testEntry, fetchResult.entries.size)
+                } else {
+                    SelfTestResult.TestEventMissing(fetchResult.entries.size)
+                }
+            }
+        }
+    }
+
+    /**
+     * Triggers companion to write a TEST_LOG_WRITE event via Provider.
+     */
+    fun triggerCompanionTestLog(context: Context): Boolean {
+        return try {
+            val uri = context.contentResolver.insert(TEST_LOG_URI, null)
+            uri != null
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed triggering test log write: ${e.message}")
+            false
+        }
     }
 
     /**
@@ -468,6 +709,7 @@ object TilePluginLog {
             appendLine("Device            : ${Build.MANUFACTURER} ${Build.MODEL} (Android ${Build.VERSION.RELEASE}, API ${Build.VERSION.SDK_INT})")
             appendLine("Generated At      : ${fullDateFormat.get()?.format(Date())}")
             appendLine("Total Entries     : ${entries.size}")
+            appendLine("Persistent Log    : filesDir/$LOG_FILE_NAME")
             appendLine("==================================================")
             appendLine("             COMPANION LOG RECORDS                ")
             appendLine("==================================================")
