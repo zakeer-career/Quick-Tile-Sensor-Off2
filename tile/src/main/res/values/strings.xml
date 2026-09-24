@@ -1,0 +1,5 @@
+<resources>
+    <string name="tile_companion_app_name">SensorsOff Quick Tile</string>
+    <string name="tile_label">Sensors Off</string>
+    <string name="tile_description">Toggle device sensors on or off</string>
+</resources>

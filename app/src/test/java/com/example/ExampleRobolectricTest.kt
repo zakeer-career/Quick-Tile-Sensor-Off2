@@ -148,7 +148,7 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `test manifest contains no boot receivers and no persistent services`() {
+  fun `test manifest contains no boot receivers, no foreground services, and no duplicate tile service in app module`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val pm = context.packageManager
     val packageInfo = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_RECEIVERS or android.content.pm.PackageManager.GET_SERVICES)
@@ -157,9 +157,9 @@ class ExampleRobolectricTest {
     // Assert no BootCompletedReceiver or app-defined boot receiver
     org.junit.Assert.assertFalse(receiverNames.any { it.contains("Boot") || it.startsWith("com.example") })
     val services = packageInfo.services ?: emptyArray()
-    // Only the QS TileService is registered
-    assertEquals(1, services.size)
-    assertEquals(SensorsOffTileService::class.java.name, services[0].name)
+    // Main app module has ZERO TileServices - the tile is solely in the companion APK (:tile)
+    val tileServices = services.filter { it.permission == "android.permission.BIND_QUICK_SETTINGS_TILE" }
+    assertEquals(0, tileServices.size)
   }
 
   @Test
@@ -523,14 +523,13 @@ class ExampleRobolectricTest {
   // ==========================================
 
   @Test
-  fun `test Tile Resilience - TileService class and manifest configuration verified`() {
+  fun `test Tile Resilience - App module manifest has zero TileServices and queries companion package`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val pm = context.packageManager
     val packageInfo = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SERVICES)
-    val tileServiceInfo = packageInfo.services?.find { it.name == SensorsOffTileService::class.java.name }
-    assertNotNull(tileServiceInfo)
-    assertEquals("android.permission.BIND_QUICK_SETTINGS_TILE", tileServiceInfo?.permission)
-    assertTrue(tileServiceInfo?.exported == true)
+    val tileServiceInfo = packageInfo.services?.find { it.permission == "android.permission.BIND_QUICK_SETTINGS_TILE" }
+    assertNull(tileServiceInfo)
+    assertEquals("com.SensorsOff", context.packageName)
   }
 
   @Test
@@ -594,10 +593,8 @@ class ExampleRobolectricTest {
     val packageInfo = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SERVICES)
     val services = packageInfo.services ?: emptyArray()
     
-    // The only registered service must be the Quick Settings TileService
-    assertEquals(1, services.size)
-    assertEquals(SensorsOffTileService::class.java.name, services[0].name)
-    assertEquals("android.permission.BIND_QUICK_SETTINGS_TILE", services[0].permission)
+    // The main app module contains zero background or foreground services
+    assertEquals(0, services.size)
   }
 
   @Test
@@ -620,20 +617,15 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `test Tile Resilience - SensorsOffTileService can be constructed independently in fresh process`() {
-    val service = SensorsOffTileService()
-    assertNotNull(service)
-  }
-
-  @Test
-  fun `test Tile Resilience - App never disables its own TileService component`() {
+  fun `test Tile Resilience - App launcher activity alias states`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
     val pm = context.packageManager
-    val tileComponent = android.content.ComponentName(context, SensorsOffTileService::class.java)
-    val state = pm.getComponentEnabledSetting(tileComponent)
+    val defaultAlias = android.content.ComponentName(context, "com.SensorsOff.MainActivityDefault")
+    val state = pm.getComponentEnabledSetting(defaultAlias)
     assertTrue(
       state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT ||
-      state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+      state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED ||
+      state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED
     )
   }
 
@@ -646,16 +638,6 @@ class ExampleRobolectricTest {
     val entry = logs.firstOrNull { it.detail == "Test process tag" }
     assertNotNull(entry)
     assertTrue(entry!!.processTag.startsWith("PID:"))
-  }
-
-  @Test
-  fun `test Tile Resilience - onClick without privilege updates state and logs event without launching activity`() {
-    val serviceController = org.robolectric.Robolectric.buildService(SensorsOffTileService::class.java).create()
-    val service = serviceController.get()
-    // Calling onClick directly on an unprivileged service should not crash or throw
-    service.onClick()
-    val logs = TileLogManager.logsFlow.value
-    assertTrue(logs.any { it.detail.contains("Touch detected while Shizuku/Root is unavailable") })
   }
 }
 

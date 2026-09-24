@@ -6,7 +6,8 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
-- [v2.8.3 - Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery](#v283---quick-settings-tile-resilience-zero-daemon-lifecycle-recovery)
+- [v2.8.4 - Production Release: Version Promotion & Architecture Hardening](#v284---production-release-version-promotion--architecture-hardening)
+- [v2.8.3 - Modular Two-APK Architecture & Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery](#v283---modular-two-apk-architecture--quick-settings-tile-resilience-zero-daemon-lifecycle-recovery)
 - [v2.8.2 - API-Version-Specific Binder Transactions & Documentation Alignment](#v282---api-version-specific-binder-transactions--documentation-alignment)
 - [v2.8.1 - Production Release: Global Sensor Privacy State Verification, State Isolation & Version Promotion](#v281---production-release-global-sensor-privacy-state-verification-state-isolation--version-promotion)
 - [v2.8.0 - Production Release: Version Promotion & Architecture Hardening](#v280---production-release-version-promotion--architecture-hardening)
@@ -46,12 +47,36 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ---
 
-### [v2.8.3] - Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery
+### [v2.8.4] - Production Release: Version Promotion & Architecture Hardening
 
 #### Problem Analysis
+- **Two-APK Companion Separation Finalization**:
+  - Following the modularization into `:app`, `:core`, and `:tile`, the duplicate tile service declaration and implementation in the main app module were completely removed.
+  - The standalone Quick Tile Companion (`com.SensorsOff.tile`) is confirmed as the sole provider of the Quick Settings tile, completely decoupled from the main UI application (`com.SensorsOff`).
+- **Version Alignment Across Modules**:
+  - Main application module (`:app`) and Companion module (`:tile`) required coordinated promotion to `versionCode = 42` and `versionName = 2.8.4`.
+
+#### Root Cause
+- Retaining duplicate tile declarations or stale references in the main app module risked ambiguity in system services and multi-APK distribution pipelines. Complete isolation guarantees predictable SystemUI binding directly to the companion package without UI process interference.
+
+#### Engineered Resolution & Impact
+- Promoted `versionCode` to `42` and `versionName` to `"2.8.4"` across both `:app` and `:tile` build scripts.
+- Synchronized documentation badges, changelogs, and commit history to reflect version 2.8.4.
+- Verified test suite pass rate across all modules under Robolectric unit testing.
+
+---
+
+### [v2.8.3] - Modular Two-APK Architecture & Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery
+
+#### Problem Analysis
+- **Modular Decoupling for Tile Isolation**:
+  - Bundling the Quick Settings `TileService` solely within the main application process coupled its lifecycle to the main application's UI memory pressure and process states.
+  - Decoupling into an independent Quick Tile Companion (`:tile` module producing `com.SensorsOff.tile`) enables SystemUI to manage the tile process completely independently of the main UI application (`:app` producing `com.SensorsOff`).
 - **TileService Process Reclamation & Transient State Handling**:
   - Android `SystemUI` instantiates `TileService` on demand and frequently destroys the service when the QS shade closes or when the system experiences memory pressure.
   - Previous implementations mapped `SensorPrivacyState.UNKNOWN` to `Tile.STATE_UNAVAILABLE`, which caused SystemUI to visually grey out the tile and block user tap gestures during transient state inquiries or brief Shizuku disconnections.
+- **Unprivileged QS Click Path Refinement**:
+  - Tapping the QS tile when privilege was unavailable previously invoked `launchShizukuOrApp()`, causing unwanted activity launches and unexpected notification shade collapses during quick settings usage.
 - **Elimination of Polling Loops & Boot Pre-Warming**:
   - `awaitShizukuBinder()` previously used a loop with `delay(40)` to poll for Shizuku binder availability. Polling under battery constraints or during user clicks is fragile and introduces latency spikes.
   - `BootCompletedReceiver` attempted to trigger `requestListeningState()` at boot, which does not bypass package stopped states and causes unnecessary background execution at system startup.
@@ -63,11 +88,14 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 #### Root Cause
 - Third-party `TileService` components do not have process persistence guarantees in Android. Attempting to force process persistence via foreground services, background daemons, or boot pre-warming violates platform standards, drains battery, and conflicts with Android background execution policies.
+- Decoupling the Tile into an isolated Companion APK (`com.SensorsOff.tile`) ensures that tile recreation by SystemUI does not initialize heavy UI or Compose components.
 - Android's security sandbox explicitly suspends all components upon Force-Stop until the user explicitly restarts the package.
 - Mapping UNKNOWN states to `Tile.STATE_UNAVAILABLE` broke the user recovery path because disabled tiles cannot receive `onClick()` events to trigger re-authorization or re-connection.
+- Calling activity launch intents from `TileService.onClick()` when unprivileged forces SystemUI to close the notification shade. A pure Quick Settings tile must handle unprivileged interactions gracefully by updating state without collapsing the shade.
 - Polling loops for IPC binders are unnecessary because Shizuku exposes sticky listeners that immediately notify of binder lifecycle events.
 
 #### Engineered Resolution & Impact
+- Established a modular Three-Module Architecture: `:core` (shared hardware engine), `:tile` (standalone Quick Tile Companion APK `com.SensorsOff.tile`), and `:app` (main application UI `com.SensorsOff`).
 - Enforced clean state semantics: `SensorPrivacyState.UNKNOWN` maps to `Tile.STATE_INACTIVE` with subtitle `"State Unknown"`, ensuring the tile remains interactive in SystemUI.
 - Converted `pendingTargetState` and `pendingTargetExpiryTimeMs` from static companion variables to instance variables in `SensorsOffTileService`.
 - Removed `launchShizukuOrApp()` from `SensorsOffTileService.onClick()` and eliminated the method entirely, avoiding unwanted external activity launches or collapse of the Quick Settings notification shade when tapping the tile in an unprivileged state.
@@ -78,7 +106,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 - Implemented asynchronous authoritative state queries on `onStartListening()` and `onTileAdded()` that refresh the tile in real-time when the QS shade expands.
 - Added process session telemetry (`processTag` / `PID`) to diagnose cold starts and service recreation cycles.
 - Kept the architecture 100% on-demand with zero background daemons, zero foreground services, zero wake locks, and zero battery consumption while idle.
-- Added 55 comprehensive unit tests in `ExampleRobolectricTest` validating cold-start instantiation, state refresh across service instance recreations, manifest purity, no self-disabling components, and unprivileged click safety.
+- Added comprehensive unit tests across `:app` and `:tile` verifying cold-start instantiation, state refresh across service instance recreations, manifest purity, no self-disabling components, and unprivileged click safety.
 
 ---
 

@@ -24,4 +24,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "SensorsOff"
 
+include(":core")
 include(":app")
+include(":tile")

@@ -1,4 +1,4 @@
-package com.example
+package com.example.tile
 
 import android.content.Context
 import android.database.ContentObserver
@@ -11,27 +11,30 @@ import android.provider.Settings
 import android.service.quicksettings.Tile
 import android.service.quicksettings.TileService
 import android.util.Log
+import com.example.LogLevel
+import com.example.SensorPrivacyState
+import com.example.ShizukuManager
+import com.example.TileLogManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Optimized Quick Settings Tile Service for SensorsOff.
+ * Independent Quick Settings Tile Service for SensorsOff Companion APK.
  * Features:
- * - Optimistic UI switching with authoritative hardware state confirmation
- * - Pre-cached Icon and String handles to minimize allocations
- * - Real-time ContentObserver for reactivity to external system setting changes
- * - Redundant IPC elimination to preserve QS shade smoothness
+ * - 100% Standalone APK process running completely independently of the main app
+ * - Zero background daemons, zero polling, zero wake locks, zero persistent services
+ * - Authoritative hardware state confirmation via ISensorPrivacyManager Binder transactions
+ * - Event-driven reactivity using ContentObserver and Conflated Channel
  */
 class SensorsOffTileService : TileService() {
 
     companion object {
-        private const val TAG = "SensorsOffTileService"
+        private const val TAG = "SensorsOffTileCompanion"
     }
 
     @Volatile private var pendingTargetState: Boolean? = null
@@ -87,15 +90,15 @@ class SensorsOffTileService : TileService() {
 
         TileLogManager.logLifecycleEvent(
             applicationContext,
-            "TileService",
+            "CompanionTileService",
             "onCreate",
-            "SensorsOffTileService initialized with ContentObserver and Conflated Channel"
+            "SensorsOffTileService initialized independently in standalone tile process"
         )
 
         // Launch single serialized toggle consumer to eliminate concurrent shell process pileups
         serviceScope.launch(Dispatchers.IO) {
             for (initialItem in toggleChannel) {
-                // Coalesce rapid clicks: drain any queued clicks to only process the final target
+                // Drain any queued clicks to only process the final target
                 var currentItem = initialItem
                 while (true) {
                     val next = toggleChannel.tryReceive().getOrNull() ?: break
@@ -161,7 +164,7 @@ class SensorsOffTileService : TileService() {
         }
         TileLogManager.logLifecycleEvent(
             applicationContext,
-            "TileService",
+            "CompanionTileService",
             "onDestroy",
             "SensorsOffTileService unbinding cleanly / destroying instance"
         )
@@ -214,7 +217,6 @@ class SensorsOffTileService : TileService() {
         ShizukuManager.initialize(applicationContext)
         reloadVisualConfig()
         refreshTileImmediately()
-        // Asynchronously query authoritative state upon tile addition
         serviceScope.launch(Dispatchers.IO) {
             try {
                 val currentState = if (cachedBlockMode == "cam_mic") {
@@ -252,7 +254,7 @@ class SensorsOffTileService : TileService() {
 
         TileLogManager.logLifecycleEvent(
             applicationContext,
-            "TileService",
+            "CompanionTileService",
             "onStartListening",
             "Quick Settings shade opened / tile listening started"
         )
@@ -315,7 +317,7 @@ class SensorsOffTileService : TileService() {
         super.onStopListening()
         TileLogManager.logLifecycleEvent(
             applicationContext,
-            "TileService",
+            "CompanionTileService",
             "onStopListening",
             "Quick Settings shade closed / tile listening stopped"
         )
@@ -352,7 +354,7 @@ class SensorsOffTileService : TileService() {
 
         TileLogManager.logLifecycleEvent(
             applicationContext,
-            "TileService",
+            "CompanionTileService",
             "onClick",
             "User tapped Quick Settings tile"
         )
@@ -438,5 +440,3 @@ class SensorsOffTileService : TileService() {
         updateTileState(if (isSensorsOff) SensorPrivacyState.ENABLED else SensorPrivacyState.DISABLED)
     }
 }
-
-

@@ -11,26 +11,56 @@ Each commit entry includes:
 
 ---
 
+### [v2.8.4] - 2026-09-23
+
+```git
+chore(release): promote project version to 2.8.4 (versionCode 42)
+
+Problem:
+1. Following the complete modularization into :app, :core, and :tile, version numbers across build modules needed synchronization.
+2. The main app module required verification of zero residual Quick Settings tile components.
+
+Root Cause:
+1. Version promotion to 2.8.4 (versionCode 42) ensures clean multi-module APK alignment and production release integrity.
+
+Changes:
+- app/build.gradle.kts: Bumped versionCode to 42 and versionName to "2.8.4".
+- tile/build.gradle.kts: Bumped versionCode to 42 and versionName to "2.8.4".
+- README.md: Updated release badge to v2.8.4.
+- CHANGELOG.md: Added release notes for version 2.8.4.
+- PROBLEM_ANALYSIS_ROOT_CAUSE.md: Added post-mortem entry for v2.8.4.
+
+Verification:
+- gradle testDebugUnitTest executed with 100% test success across all modules.
+- Multi-module compilation succeeded with 0 errors.
+```
+
+---
+
 ### [v2.8.3] - 2026-09-23
 
 ```git
-feat(tile): implement zero-daemon Tile Resilience and on-demand lifecycle recovery
+feat(architecture): implement modular Two-APK Companion Architecture and Quick Settings Tile Resilience
 
 Problem:
 1. Android SystemUI creates, destroys, and recreates TileService instances dynamically across process death, Doze, and memory reclamation.
-2. Previous implementations risked treating transient state uncertainties (such as temporary Shizuku disconnections or SensorPrivacyState.UNKNOWN) as permanent tile unavailability (Tile.STATE_UNAVAILABLE), disabling QS user interaction.
-3. ShizukuManager.awaitShizukuBinder relied on timed delay polling loops, which could cause CPU churn or delays during user clicks.
-4. BootCompletedReceiver attempted boot-time pre-warming with requestListeningState, creating unnecessary background execution at device startup.
-5. Users reported confusion between Android Force-Stop (which suspends all package components) vs normal process reclamation and post-reboot cold starts.
+2. Coupling the Quick Settings TileService directly inside the main UI process made the tile susceptible to UI process lifecycle volatility.
+3. Unprivileged tile taps in previous iterations attempted to trigger launchShizukuOrApp(), causing unwanted activity launches and unexpected notification shade collapses during quick settings usage.
+4. ShizukuManager.awaitShizukuBinder relied on timed delay polling loops, which could cause CPU churn or delays during user clicks.
+5. BootCompletedReceiver attempted boot-time pre-warming with requestListeningState, creating unnecessary background execution at device startup.
 
 Root Cause:
-1. Standard Android OS process management reclaims third-party application processes under memory pressure. Attempting to bypass this with daemons or foreground services violates background execution limits and causes battery drain.
-2. Android Force-Stop places the package in a system-level stopped state (FLAG_STOPPED), preventing TileService or BroadcastReceiver instantiation until the user manually launches the app.
+1. Standard Android OS process management reclaims third-party application processes under memory pressure. Decoupling the TileService into an independent Companion APK (com.SensorsOff.tile) allows the tile process to run in an isolated lifecycle from the main UI.
+2. Calling activity launch intents from TileService.onClick() when unprivileged forces SystemUI to close the notification shade. A pure Quick Settings tile must handle unprivileged interactions gracefully by updating state without collapsing the shade.
 3. Tile.STATE_UNAVAILABLE in Android SystemUI prevents user tap interactions. UNKNOWN sensor states must map to interactive STATE_INACTIVE with clear subtitles.
 4. Polling for IPC binders introduces CPU churn; Shizuku provides native sticky binder listeners that communicate connection events directly.
 
 Changes:
-- app/src/main/java/com/example/SensorsOffTileService.kt:
+- Modular Architecture:
+  * Established :core module containing SensorPrivacyState, ShizukuManager, TileLogManager, and SensorPrivacyCodes.
+  * Established :tile module for the standalone Quick Tile Companion APK (com.SensorsOff.tile).
+  * Maintained :app module for the main UI application (com.SensorsOff).
+- tile/src/main/java/com/example/tile/SensorsOffTileService.kt:
   * Removed launchShizukuOrApp() from onClick() and removed the method definition to eliminate unexpected activity launches or notification shade collapse during QS interaction.
   * Mapped SensorPrivacyState.UNKNOWN to Tile.STATE_INACTIVE with "State Unknown" subtitle to preserve tile interactivity.
   * Converted pendingTargetState and pendingTargetExpiryTimeMs from static companion variables to instance variables.
@@ -39,22 +69,21 @@ Changes:
   * Added asynchronous authoritative state query on onTileAdded and onStartListening without main thread blocking.
   * Added PID-aware lifecycle logging across onCreate, onStartListening, onStopListening, onClick, and onDestroy.
   * Cleaned up instance resources on onTileRemoved and onDestroy.
-- app/src/main/java/com/example/ShizukuManager.kt:
+- core/src/main/java/com/example/ShizukuManager.kt:
+  * Decoupled TileService class references and resource lookups.
   * Removed awaitShizukuBinder() and all delay polling loops from sticky binder listeners.
   * Removed synchronous Thread.sleep() retry blocks from state toggle verification logic.
   * Added invalidateSensorPrivacyBinder() and null checks for dead/restarted binders.
 - app/src/main/java/com/example/SensorsOffApp.kt:
   * Removed speculative asynchronous root pre-warming coroutine from onCreate(), keeping startup lightweight.
-- app/src/main/AndroidManifest.xml:
+- app/src/main/AndroidManifest.xml & tile/src/main/AndroidManifest.xml:
   * Removed RECEIVE_BOOT_COMPLETED permission and deleted BootCompletedReceiver.
-- app/src/test/java/com/example/ExampleRobolectricTest.kt:
-  * Added 54 comprehensive unit tests validating tile initialization from cold start, onStartListening reconstruction, dead binder resilience, zero manifest service/receiver bloat, and no self-disabling components.
-- README.md:
-  * Documented Tile Resilience architecture, on-demand Shizuku binding, force-stop behavior, and OEM/battery boundaries.
+- Unit Testing:
+  * Added Robolectric unit tests across :app and :tile modules verifying cold-start initialization, unprivileged click safety, and zero keep-alive services.
 
 Verification:
-- gradle :app:testDebugUnitTest passed (54 unit tests successful).
-- Zero foreground service, zero persistent background daemon, zero boot receivers.
+- gradle testDebugUnitTest passed all unit tests across all modules.
+- Zero foreground service, zero persistent background daemon, zero boot receivers, zero polling loops.
 ```
 
 ---

@@ -17,8 +17,8 @@ android {
     applicationId = "com.SensorsOff"
     minSdk = 24
     targetSdk = 36
-    versionCode = 40
-    versionName = "2.8.3.beta" 
+    versionCode = 42
+    versionName = "2.8.4" 
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -94,6 +94,7 @@ googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.W
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.
 dependencies {
+  implementation(project(":core"))
   implementation(platform(libs.androidx.compose.bom))
   implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)

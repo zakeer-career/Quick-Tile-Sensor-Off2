@@ -55,6 +55,7 @@ data class SensorUiState(
     val logs: List<String> = emptyList(),
     val tileSettings: TileSettingsState = TileSettingsState(),
     val showExperimentalToggles: Boolean = false,
+    val isTileCompanionInstalled: Boolean = false,
     val sensorList: List<SensorItem> = listOf(
         SensorItem("camera", "Camera", "Hardware Sensor", false, "ic_camera"),
         SensorItem("mic", "Microphone", "Audio Input", false, "ic_mic"),
@@ -241,6 +242,13 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 iconStyle = tileIconStyle
             )
 
+            val isCompanionInstalled = try {
+                context.packageManager.getPackageInfo("com.SensorsOff.tile", 0)
+                true
+            } catch (e: Exception) {
+                false
+            }
+
             _uiState.update { state ->
                 state.copy(
                     isShizukuInstalled = isInstalled,
@@ -248,6 +256,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                     isShizukuAuthorized = isAuthorized,
                     isRootAvailable = isRoot,
                     isSensorsOff = isOff,
+                    isTileCompanionInstalled = isCompanionInstalled,
                     appThemeMode = themeMode,
                     appLauncherAlias = launcherAlias,
                     showExperimentalToggles = showExp,

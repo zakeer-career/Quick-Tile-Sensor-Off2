@@ -1029,7 +1029,8 @@ object ShizukuManager {
      */
     fun addTileToQuickSettings(context: Context, addNativeAospTile: Boolean = false): Pair<Boolean, String> {
         val packageName = context.packageName
-        val appTileComponent = "custom($packageName/$packageName.SensorsOffTileService)"
+        val tileClassName = if (packageName == "com.SensorsOff.tile") "com.example.tile.SensorsOffTileService" else "com.example.SensorsOffTileService"
+        val appTileComponent = "custom($packageName/$tileClassName)"
         val aospTileComponent = "custom(com.android.settings/com.android.settings.development.qs.SensorPrivacyTileService)"
         val aospPlain = "sensor_privacy"
 
@@ -1040,14 +1041,19 @@ object ShizukuManager {
             try {
                 val sbm = context.getSystemService(android.app.StatusBarManager::class.java)
                 if (sbm != null) {
-                    val component = android.content.ComponentName(context, SensorsOffTileService::class.java)
-                    val icon = android.graphics.drawable.Icon.createWithResource(context, R.drawable.ic_sensors_off)
-                    sbm.requestAddTileService(
-                        component,
-                        context.getString(R.string.tile_label),
-                        icon,
-                        context.mainExecutor
-                    ) { _ -> }
+                    val component = android.content.ComponentName(packageName, tileClassName)
+                    val iconResId = context.resources.getIdentifier("ic_sensors_off", "drawable", packageName)
+                    val icon = if (iconResId != 0) android.graphics.drawable.Icon.createWithResource(context, iconResId) else null
+                    val labelResId = context.resources.getIdentifier("tile_label", "string", packageName)
+                    val label = if (labelResId != 0) context.getString(labelResId) else "Sensors Off"
+                    if (icon != null) {
+                        sbm.requestAddTileService(
+                            component,
+                            label,
+                            icon,
+                            context.mainExecutor
+                        ) { _ -> }
+                    }
                 }
             } catch (t: SecurityException) {
                 Log.w(TAG, "StatusBarManager.requestAddTileService security denied", t)
@@ -1465,10 +1471,20 @@ object ShizukuManager {
      */
     fun notifyTileServiceToUpdate(context: Context) {
         try {
+            val packageName = context.packageName
+            val tileClassName = if (packageName == "com.SensorsOff.tile") "com.example.tile.SensorsOffTileService" else "com.example.SensorsOffTileService"
             android.service.quicksettings.TileService.requestListeningState(
                 context,
-                android.content.ComponentName(context, SensorsOffTileService::class.java)
+                android.content.ComponentName(packageName, tileClassName)
             )
+            if (packageName != "com.SensorsOff.tile") {
+                try {
+                    android.service.quicksettings.TileService.requestListeningState(
+                        context,
+                        android.content.ComponentName("com.SensorsOff.tile", "com.example.tile.SensorsOffTileService")
+                    )
+                } catch (ignored: Exception) {}
+            }
             TileLogManager.logTileEvent(
                 context,
                 "SystemUI Sync Dispatched",
