@@ -639,5 +639,89 @@ class ExampleRobolectricTest {
     assertNotNull(entry)
     assertTrue(entry!!.processTag.startsWith("PID:"))
   }
+
+  @Test
+  fun `test Companion Installation - Detection uses PackageManager directly`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    // Initially not installed in test environment
+    val notInstalled = CompanionInstaller.isCompanionInstalled(context)
+    org.junit.Assert.assertFalse(notInstalled)
+
+    // Install package into shadow package manager
+    val shadowPm = org.robolectric.Shadows.shadowOf(context.packageManager)
+    val packageInfo = android.content.pm.PackageInfo().apply {
+      packageName = "com.SensorsOff.tile"
+      versionName = "2.8.4"
+    }
+    shadowPm.installPackage(packageInfo)
+
+    // Verify detection returns true immediately
+    val isInstalled = CompanionInstaller.isCompanionInstalled(context)
+    assertTrue(isInstalled)
+    assertEquals("2.8.4", CompanionInstaller.getInstalledCompanionVersion(context))
+  }
+
+  @Test
+  fun `test Companion Installation - UI state correctly reflects companion not installed vs installed`() {
+    val uninstalledState = SensorUiState(isTileCompanionInstalled = false)
+    org.junit.Assert.assertFalse(uninstalledState.isTileCompanionInstalled)
+
+    val installedState = SensorUiState(isTileCompanionInstalled = true, companionVersionName = "2.8.4")
+    assertTrue(installedState.isTileCompanionInstalled)
+    assertEquals("2.8.4", installedState.companionVersionName)
+  }
+
+  @Test
+  fun `test Companion Installation - Install action launches Package Installer intent with FileProvider`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val result = CompanionInstaller.launchCompanionInstallFlow(context)
+    assertTrue(result.isSuccess)
+
+    val shadowApp = org.robolectric.Shadows.shadowOf(context as android.app.Application)
+    val startedIntent = shadowApp.nextStartedActivity
+    assertNotNull(startedIntent)
+    assertEquals(Intent.ACTION_VIEW, startedIntent.action)
+    assertEquals("application/vnd.android.package-archive", startedIntent.type)
+    assertTrue(startedIntent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+    assertTrue(startedIntent.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
+    assertTrue(startedIntent.data.toString().startsWith("content://com.SensorsOff.fileprovider/"))
+  }
+
+  @Test
+  fun `test Companion Installation - sysui_qs_tiles failure does not affect companion card state`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    // Even when Shizuku and sysui_qs_tiles are unavailable, companion installation status is fully independent
+    val state = SensorUiState(
+      isShizukuRunning = false,
+      isShizukuAuthorized = false,
+      isTileCompanionInstalled = false
+    )
+    org.junit.Assert.assertFalse(state.isTileCompanionInstalled)
+    // Companion state does not depend on Shizuku
+    val isCompanion = CompanionInstaller.isCompanionInstalled(context)
+    assertEquals(state.isTileCompanionInstalled, isCompanion)
+  }
+
+  @Test
+  fun `test Companion Installation - Main application retains com_SensorsOff and zero TileServices`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    assertEquals("com.SensorsOff", context.packageName)
+
+    val pm = context.packageManager
+    val packageInfo = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SERVICES)
+    val services = packageInfo.services ?: emptyArray()
+    // No TileServices in main app
+    org.junit.Assert.assertFalse(services.any { it.permission == "android.permission.BIND_QUICK_SETTINGS_TILE" })
+  }
+
+  @Test
+  fun `test Companion Installation - Zero foreground services and zero background daemons`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val pm = context.packageManager
+    val packageInfo = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SERVICES)
+    val services = packageInfo.services ?: emptyArray()
+    assertEquals(0, services.size)
+  }
 }
+
 

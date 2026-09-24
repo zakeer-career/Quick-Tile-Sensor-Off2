@@ -6,7 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
-- [v2.8.4 - Production Release: Version Promotion & Architecture Hardening](#v284---production-release-version-promotion--architecture-hardening)
+- [v2.8.4 - Quick Tile Companion Installation Flow & Secure FileProvider Delivery](#v284---quick-tile-companion-installation-flow--secure-fileprovider-delivery)
 - [v2.8.3 - Modular Two-APK Architecture & Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery](#v283---modular-two-apk-architecture--quick-settings-tile-resilience-zero-daemon-lifecycle-recovery)
 - [v2.8.2 - API-Version-Specific Binder Transactions & Documentation Alignment](#v282---api-version-specific-binder-transactions--documentation-alignment)
 - [v2.8.1 - Production Release: Global Sensor Privacy State Verification, State Isolation & Version Promotion](#v281---production-release-global-sensor-privacy-state-verification-state-isolation--version-promotion)
@@ -47,22 +47,27 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ---
 
-### [v2.8.4] - Production Release: Version Promotion & Architecture Hardening
+### [v2.8.4] - Quick Tile Companion Installation Flow & Secure FileProvider Delivery
 
 #### Problem Analysis
-- **Two-APK Companion Separation Finalization**:
-  - Following the modularization into `:app`, `:core`, and `:tile`, the duplicate tile service declaration and implementation in the main app module were completely removed.
-  - The standalone Quick Tile Companion (`com.SensorsOff.tile`) is confirmed as the sole provider of the Quick Settings tile, completely decoupled from the main UI application (`com.SensorsOff`).
-- **Version Alignment Across Modules**:
-  - Main application module (`:app`) and Companion module (`:tile`) required coordinated promotion to `versionCode = 42` and `versionName = 2.8.4`.
+- **Missing In-App Installation Flow**:
+  - With the separation of the standalone Quick Tile Companion (`com.SensorsOff.tile`), users installing the main SensorsOff APK had no in-app mechanism to trigger the companion installation.
+  - The UI presented tile customization and diagnostic injection options, but lacked a distinct, user-facing card guiding the user to install the companion package.
+- **Diagnostic Independence**:
+  - Companion installation must remain completely functional regardless of `sysui_qs_tiles` diagnostic query status.
+  - Package detection must be based strictly on `PackageManager` queries, rejecting saved boolean preferences that could desynchronize if the user uninstalls or reinstalls the companion outside the app.
 
 #### Root Cause
-- Retaining duplicate tile declarations or stale references in the main app module risked ambiguity in system services and multi-APK distribution pipelines. Complete isolation guarantees predictable SystemUI binding directly to the companion package without UI process interference.
+- Decoupling the tile into a separate APK created a physical distribution boundary. Android requires explicit user confirmation via the `ACTION_VIEW` Package Installer intent when an app requests installing another APK, necessitating a secure `FileProvider` configuration and asset delivery pipeline.
 
 #### Engineered Resolution & Impact
-- Promoted `versionCode` to `42` and `versionName` to `"2.8.4"` across both `:app` and `:tile` build scripts.
-- Synchronized documentation badges, changelogs, and commit history to reflect version 2.8.4.
-- Verified test suite pass rate across all modules under Robolectric unit testing.
+- **Asset Bundling**: Bundled `tile-companion.apk` in `:app/src/main/assets/` to ensure offline availability.
+- **Scoped FileProvider**: Configured `androidx.core.content.FileProvider` in `:app/src/main/AndroidManifest.xml` mapped to `@xml/file_paths` with `<cache-path name="apk_cache" path="apks/" />`.
+- **PackageManager State Verification**: Added `CompanionInstaller.isCompanionInstalled()` querying `PackageManager.getPackageInfo("com.SensorsOff.tile", ...)` upon every `onResume()` without background polling.
+- **Dedicated UI Card**: Designed and integrated `SleekTileCompanionCard` prominently in the Quick Settings section of the main screen:
+  - Not Installed: Displays "Independent Quick Settings tile" description with prominent "Install Companion" button.
+  - Installed: Displays "✓ Companion Installed" badge with "Open Quick Settings" quick-action button.
+- **Zero Background Overhead**: Verified 0 background services, 0 daemons, 0 alarms, and 0 wake locks.
 
 ---
 

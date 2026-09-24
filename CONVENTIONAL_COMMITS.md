@@ -14,25 +14,29 @@ Each commit entry includes:
 ### [v2.8.4] - 2026-09-23
 
 ```git
-chore(release): promote project version to 2.8.4 (versionCode 42)
+feat(ui): add user-facing installation flow for Quick Tile Companion APK
 
 Problem:
-1. Following the complete modularization into :app, :core, and :tile, version numbers across build modules needed synchronization.
-2. The main app module required verification of zero residual Quick Settings tile components.
+1. The main SensorsOff UI lacked a visible and accessible interface for users to install the modular :tile Companion APK (com.SensorsOff.tile).
+2. Users had no direct way to install the independent companion APK on-device.
+3. sysui_qs_tiles diagnostic failures must not prevent or block Quick Tile Companion setup.
 
 Root Cause:
-1. Version promotion to 2.8.4 (versionCode 42) ensures clean multi-module APK alignment and production release integrity.
+1. The modular two-APK separation decoupled the TileService from the main app, requiring an explicit PackageInstaller delivery flow via secure FileProvider content:// URIs with temporary read permissions.
 
 Changes:
-- app/build.gradle.kts: Bumped versionCode to 42 and versionName to "2.8.4".
-- tile/build.gradle.kts: Bumped versionCode to 42 and versionName to "2.8.4".
-- README.md: Updated release badge to v2.8.4.
-- CHANGELOG.md: Added release notes for version 2.8.4.
-- PROBLEM_ANALYSIS_ROOT_CAUSE.md: Added post-mortem entry for v2.8.4.
+- app/src/main/assets/tile-companion.apk: Bundled pre-built companion APK artifact in app assets.
+- app/src/main/res/xml/file_paths.xml: Configured scoped FileProvider cache-path mapping for APK delivery.
+- app/src/main/AndroidManifest.xml: Declared REQUEST_INSTALL_PACKAGES and FileProvider authority.
+- app/src/main/java/com/example/CompanionInstaller.kt: Created installer utility with PackageManager-based installation checks, version queries, and PackageInstaller intent dispatch.
+- app/src/main/java/com/example/SensorViewModel.kt: Added companion installation state and dispatchers.
+- app/src/main/java/com/example/MainActivity.kt: Added SleekTileCompanionCard UI rendering "Install Companion" or "✓ Companion Installed" and "Open Quick Settings".
+- app/src/test/java/com/example/ExampleRobolectricTest.kt: Added 6 Robolectric unit tests for companion installation flow, state verification, and zero background services.
 
 Verification:
-- gradle testDebugUnitTest executed with 100% test success across all modules.
-- Multi-module compilation succeeded with 0 errors.
+- gradle testDebugUnitTest passed with 100% success.
+- Zero foreground services, zero background daemons, zero boot receivers verified.
+- Main package retains com.SensorsOff and companion retains com.SensorsOff.tile.
 ```
 
 ---

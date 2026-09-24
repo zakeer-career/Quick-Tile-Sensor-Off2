@@ -56,6 +56,7 @@ data class SensorUiState(
     val tileSettings: TileSettingsState = TileSettingsState(),
     val showExperimentalToggles: Boolean = false,
     val isTileCompanionInstalled: Boolean = false,
+    val companionVersionName: String? = null,
     val sensorList: List<SensorItem> = listOf(
         SensorItem("camera", "Camera", "Hardware Sensor", false, "ic_camera"),
         SensorItem("mic", "Microphone", "Audio Input", false, "ic_mic"),
@@ -242,12 +243,8 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 iconStyle = tileIconStyle
             )
 
-            val isCompanionInstalled = try {
-                context.packageManager.getPackageInfo("com.SensorsOff.tile", 0)
-                true
-            } catch (e: Exception) {
-                false
-            }
+            val isCompanionInstalled = CompanionInstaller.isCompanionInstalled(context)
+            val companionVersion = CompanionInstaller.getInstalledCompanionVersion(context)
 
             _uiState.update { state ->
                 state.copy(
@@ -257,6 +254,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                     isRootAvailable = isRoot,
                     isSensorsOff = isOff,
                     isTileCompanionInstalled = isCompanionInstalled,
+                    companionVersionName = companionVersion,
                     appThemeMode = themeMode,
                     appLauncherAlias = launcherAlias,
                     showExperimentalToggles = showExp,
@@ -422,6 +420,23 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             }
             refreshState()
         }
+    }
+
+    fun installCompanion(context: Context, onResult: (Boolean, String) -> Unit) {
+        val result = CompanionInstaller.launchCompanionInstallFlow(context)
+        if (result.isSuccess) {
+            addLog("Initiated companion APK package installer flow", category = LogCategory.TILE, level = LogLevel.INFO)
+            onResult(true, "Launching Package Installer...")
+        } else {
+            val errorMsg = result.exceptionOrNull()?.message ?: "Unknown error"
+            addLog("Companion APK installation launch failed: $errorMsg", category = LogCategory.TILE, level = LogLevel.ERROR)
+            onResult(false, "Could not open package installer: $errorMsg")
+        }
+    }
+
+    fun openQuickSettings(context: Context) {
+        addLog("Opening Quick Settings panel", category = LogCategory.TILE, level = LogLevel.INFO)
+        CompanionInstaller.openQuickSettings(context)
     }
 
     fun setLogCategoryFilter(category: LogCategory) {

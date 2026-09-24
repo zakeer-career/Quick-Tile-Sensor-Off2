@@ -183,6 +183,7 @@ fun SleekHomeTabContent(
     uiState: SensorUiState
 ) {
     val colors = LocalAppColors.current
+    val context = LocalContext.current
 
     LazyColumn(
         modifier = Modifier
@@ -213,6 +214,19 @@ fun SleekHomeTabContent(
             SleekThemeSelectionCard(
                 currentTheme = uiState.appThemeMode,
                 onSelectTheme = { viewModel.updateAppThemeMode(it) }
+            )
+        }
+
+        // Quick Tile Companion Installation & Status Card
+        item {
+            SleekTileCompanionCard(
+                uiState = uiState,
+                onInstallCompanion = { onResult ->
+                    viewModel.installCompanion(context, onResult)
+                },
+                onOpenQuickSettings = {
+                    viewModel.openQuickSettings(context)
+                }
             )
         }
 
@@ -589,6 +603,161 @@ fun SleekThemeSelectionCard(
                             containerColor = colors.softBg,
                             labelColor = colors.textSecondary
                         )
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SleekTileCompanionCard(
+    uiState: SensorUiState,
+    onInstallCompanion: ((Boolean, String) -> Unit) -> Unit,
+    onOpenQuickSettings: () -> Unit
+) {
+    val colors = LocalAppColors.current
+    val context = LocalContext.current
+    var isInstalling by remember { mutableStateOf(false) }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("tile_companion_card"),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = colors.cardBg),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            if (colors.isDark) colors.glowColor else colors.border
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(
+                            if (uiState.isTileCompanionInstalled) colors.accentGreen.copy(alpha = 0.15f)
+                            else colors.accentBlue.copy(alpha = 0.15f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (uiState.isTileCompanionInstalled) Icons.Default.CheckCircle else Icons.Default.Widgets,
+                        contentDescription = "Companion Icon",
+                        tint = if (uiState.isTileCompanionInstalled) colors.accentGreen else colors.accentBlue,
+                        modifier = Modifier.size(22.dp)
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "Quick Tile Companion",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.textPrimary
+                        )
+                        if (uiState.isTileCompanionInstalled) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(colors.accentGreen.copy(alpha = 0.2f))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "INSTALLED",
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = colors.accentGreen
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = if (uiState.isTileCompanionInstalled) "✓ Companion Installed" else "Independent Quick Settings tile",
+                        fontSize = 12.sp,
+                        fontWeight = if (uiState.isTileCompanionInstalled) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (uiState.isTileCompanionInstalled) colors.accentGreen else colors.textSecondary
+                    )
+                }
+            }
+
+            Text(
+                text = if (uiState.isTileCompanionInstalled) {
+                    "The Quick Settings tile runs independently from the main SensorsOff app. Add SensorsOff to Quick Settings."
+                } else {
+                    "Runs independently from the main SensorsOff app."
+                },
+                fontSize = 12.sp,
+                color = colors.textSecondary,
+                lineHeight = 16.sp
+            )
+
+            if (!uiState.isTileCompanionInstalled) {
+                Button(
+                    onClick = {
+                        isInstalling = true
+                        onInstallCompanion { success, message ->
+                            isInstalling = false
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("install_companion_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.accentBlue),
+                    enabled = !isInstalling
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "Install Companion",
+                        modifier = Modifier.size(18.dp),
+                        tint = Color.White
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isInstalling) "Opening Installer..." else "Install Companion",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            } else {
+                Button(
+                    onClick = { onOpenQuickSettings() },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("open_quick_settings_button"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.accentGreen)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Widgets,
+                        contentDescription = "Open Quick Settings",
+                        modifier = Modifier.size(18.dp),
+                        tint = Color.White
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Open Quick Settings",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
                     )
                 }
             }
