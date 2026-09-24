@@ -61,6 +61,56 @@ object CompanionInstaller {
     }
 
     /**
+     * Diagnostic data holding resolved ContentProvider information.
+     */
+    data class ProviderResolutionInfo(
+        val isRegistered: Boolean,
+        val authority: String,
+        val packageName: String?,
+        val className: String?,
+        val details: String
+    )
+
+    /**
+     * Resolves the companion ContentProvider authority via PackageManager.
+     */
+    fun resolveCompanionLogProvider(context: Context): ProviderResolutionInfo {
+        val authority = TilePluginLog.LOG_PROVIDER_AUTHORITY
+        return try {
+            val providerInfo = context.packageManager.resolveContentProvider(
+                authority,
+                PackageManager.GET_META_DATA
+            )
+            if (providerInfo != null) {
+                ProviderResolutionInfo(
+                    isRegistered = true,
+                    authority = authority,
+                    packageName = providerInfo.packageName,
+                    className = providerInfo.name,
+                    details = "Resolved: ${providerInfo.packageName}/${providerInfo.name}"
+                )
+            } else {
+                ProviderResolutionInfo(
+                    isRegistered = false,
+                    authority = authority,
+                    packageName = null,
+                    className = null,
+                    details = "Companion provider NOT registered"
+                )
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Error resolving companion ContentProvider: ${e.message}")
+            ProviderResolutionInfo(
+                isRegistered = false,
+                authority = authority,
+                packageName = null,
+                className = null,
+                details = "Companion provider NOT registered (Error: ${e.message})"
+            )
+        }
+    }
+
+    /**
      * Extracts the bundled companion APK from assets to the scoped cache directory
      * and invokes the Android Package Installer via a secure FileProvider content:// URI.
      */

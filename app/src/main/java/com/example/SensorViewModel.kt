@@ -66,6 +66,7 @@ data class SensorUiState(
     val showExperimentalToggles: Boolean = false,
     val isTileCompanionInstalled: Boolean = false,
     val companionVersionName: String? = null,
+    val companionProviderInfo: CompanionInstaller.ProviderResolutionInfo? = null,
     val sensorList: List<SensorItem> = listOf(
         SensorItem("camera", "Camera", "Hardware Sensor", false, "ic_camera"),
         SensorItem("mic", "Microphone", "Audio Input", false, "ic_mic"),
@@ -254,6 +255,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
 
             val isCompanionInstalled = CompanionInstaller.isCompanionInstalled(context)
             val companionVersion = CompanionInstaller.getInstalledCompanionVersion(context)
+            val providerInfo = CompanionInstaller.resolveCompanionLogProvider(context)
 
             _uiState.update { state ->
                 state.copy(
@@ -264,6 +266,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                     isSensorsOff = isOff,
                     isTileCompanionInstalled = isCompanionInstalled,
                     companionVersionName = companionVersion,
+                    companionProviderInfo = providerInfo,
                     appThemeMode = themeMode,
                     appLauncherAlias = launcherAlias,
                     showExperimentalToggles = showExp,
@@ -461,6 +464,19 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
     fun refreshCompanionLogs() {
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>().applicationContext
+            val providerInfo = CompanionInstaller.resolveCompanionLogProvider(context)
+            _uiState.update { it.copy(companionProviderInfo = providerInfo) }
+
+            if (!providerInfo.isRegistered) {
+                _uiState.update {
+                    it.copy(
+                        companionLogs = emptyList(),
+                        companionLogError = "PROVIDER_UNAVAILABLE: Companion provider NOT registered (Authority: ${providerInfo.authority})"
+                    )
+                }
+                return@launch
+            }
+
             when (val result = TilePluginLog.fetchCompanionLogsWithResult(context)) {
                 is TilePluginLog.FetchResult.Success -> {
                     _uiState.update { it.copy(companionLogs = result.entries, companionLogError = null) }
@@ -475,6 +491,21 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
     fun writeCompanionTestLog() {
         viewModelScope.launch(Dispatchers.IO) {
             val context = getApplication<Application>().applicationContext
+            val providerInfo = CompanionInstaller.resolveCompanionLogProvider(context)
+            _uiState.update { it.copy(companionProviderInfo = providerInfo) }
+
+            if (!providerInfo.isRegistered) {
+                val errorMsg = "Companion provider NOT registered (${providerInfo.authority})"
+                addLog("Self-Test FAILED: $errorMsg", category = LogCategory.TILE, level = LogLevel.ERROR)
+                _uiState.update {
+                    it.copy(
+                        companionSelfTestStatus = "FAILED (Registration): $errorMsg",
+                        companionLogError = "PROVIDER_UNAVAILABLE: $errorMsg"
+                    )
+                }
+                return@launch
+            }
+
             val testResult = TilePluginLog.performCompanionSelfTest(context)
             when (testResult) {
                 is TilePluginLog.SelfTestResult.Success -> {

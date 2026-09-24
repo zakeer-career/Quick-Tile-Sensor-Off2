@@ -292,6 +292,18 @@ object TilePluginLog {
         )
     }
 
+    fun logProviderOnCreate(context: Context) {
+        logEvent(
+            context = context,
+            event = "PROVIDER_ON_CREATE",
+            fields = mapOf(
+                "class" to "TilePluginLogProvider",
+                "authority" to LOG_PROVIDER_AUTHORITY,
+                "package" to COMPANION_PACKAGE
+            )
+        )
+    }
+
     fun logTileServiceOnCreate(context: Context) {
         logEvent(
             context = context,

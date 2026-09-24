@@ -1730,6 +1730,40 @@ fun SleekLogsTabContent(
                             }
                         }
                     }
+
+                    // ContentProvider Registration Resolution Status
+                    val providerInfo = uiState.companionProviderInfo
+                    if (providerInfo != null) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(if (providerInfo.isRegistered) colors.accentGreen.copy(alpha = 0.1f) else colors.accentRose.copy(alpha = 0.1f))
+                                .padding(horizontal = 8.dp, vertical = 6.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = if (providerInfo.isRegistered) Icons.Default.CheckCircle else Icons.Default.ErrorOutline,
+                                    contentDescription = "Provider Status",
+                                    tint = if (providerInfo.isRegistered) colors.accentGreen else colors.accentRose,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (providerInfo.isRegistered) {
+                                        "Provider: ${providerInfo.packageName} (${providerInfo.className?.substringAfterLast('.')})"
+                                    } else {
+                                        "Companion provider NOT registered"
+                                    },
+                                    fontSize = 10.sp,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (providerInfo.isRegistered) colors.accentGreen else colors.accentRose
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

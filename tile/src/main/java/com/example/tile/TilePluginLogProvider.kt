@@ -28,7 +28,10 @@ import org.json.JSONObject
 class TilePluginLogProvider : ContentProvider() {
 
     override fun onCreate(): Boolean {
-        context?.let { TilePluginLog.initialize(it) }
+        context?.let { ctx ->
+            TilePluginLog.initialize(ctx)
+            TilePluginLog.logProviderOnCreate(ctx)
+        }
         return true
     }
 

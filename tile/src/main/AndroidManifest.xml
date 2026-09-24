@@ -30,7 +30,7 @@
         <!-- Dedicated Log Provider for Companion [TILE_PLUGIN] Diagnostics -->
         <provider
             android:name="com.example.tile.TilePluginLogProvider"
-            android:authorities="${applicationId}.logprovider"
+            android:authorities="com.SensorsOff.tile.logprovider"
             android:exported="true" />
 
         <!-- Self-Contained Independent Quick Settings Tile Service -->
