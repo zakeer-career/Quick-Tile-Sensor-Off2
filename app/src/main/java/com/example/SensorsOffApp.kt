@@ -2,15 +2,11 @@ package com.example
 
 import android.app.Application
 import android.util.Log
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 /**
  * Custom Application class for SensorsOff.
- * Ensures critical subsystems (Shizuku AIDL binder listeners and TileLogManager)
- * are initialized immediately upon process creation, whether launched from the UI,
- * Quick Settings TileService, or system broadcasts.
+ * Initializes lightweight process logging and registers sticky Shizuku binder listeners.
+ * Free of background daemons, persistent keep-alives, and speculative initialization.
  */
 class SensorsOffApp : Application() {
 
@@ -26,11 +22,6 @@ class SensorsOffApp : Application() {
                 "Process Created",
                 "Fresh process initialized (zero daemons/services running)"
             )
-            
-            // Pre-warm root state asynchronously to prevent cold-start UI stalls or false-negatives
-            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                ShizukuManager.refreshRootState()
-            }
         } catch (e: Exception) {
             Log.e("SensorsOffApp", "Failed during application initialization", e)
         }

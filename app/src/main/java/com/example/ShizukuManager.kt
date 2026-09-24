@@ -166,21 +166,13 @@ object ShizukuManager {
         cachedSensorPrivacyBinder = null
         Log.i(TAG, "Shizuku binder received process-wide")
         appContextRef?.get()?.let { ctx ->
-            CoroutineScope(Dispatchers.IO).launch {
-                // Wait for Shizuku permission check to fully sync (up to 3 seconds)
-                var count = 0
-                while (count < 30 && (!isShizukuRunning() || !isShizukuAuthorized())) {
-                    delay(100)
-                    count++
-                }
-                notifyTileServiceToUpdate(ctx)
-                TileLogManager.logPrivilegeEvent(
-                    ctx,
-                    "Shizuku Connected",
-                    "Shizuku binder connected; tile state refresh requested.",
-                    LogLevel.SUCCESS
-                )
-            }
+            notifyTileServiceToUpdate(ctx)
+            TileLogManager.logPrivilegeEvent(
+                ctx,
+                "Shizuku Connected",
+                "Shizuku binder connected; tile state refresh requested.",
+                LogLevel.SUCCESS
+            )
         }
     }
 
@@ -232,22 +224,6 @@ object ShizukuManager {
                 Log.w(TAG, "Failed to register Shizuku binder listeners: ${e.message}")
             }
         }
-    }
-
-    /**
-     * Suspends until the Shizuku IPC binder is connected and authorized,
-     * or until timeoutMs expires. Essential for background TileService operations.
-     */
-    suspend fun awaitShizukuBinder(timeoutMs: Long = 600L): Boolean {
-        if (isShizukuRunning() && isShizukuAuthorized()) return true
-        val start = System.currentTimeMillis()
-        while (System.currentTimeMillis() - start < timeoutMs) {
-            if (isShizukuRunning() && isShizukuAuthorized()) {
-                return true
-            }
-            delay(40)
-        }
-        return isShizukuRunning() && isShizukuAuthorized()
     }
 
     fun isShizukuInstalled(context: Context): Boolean {
@@ -730,16 +706,7 @@ object ShizukuManager {
             }
 
             // 3. Authoritative read-back verification: verify actual hardware sensor state from Android sensor privacy service
-            var confirmedState = getSensorsOffState(context)
-            if (!confirmedState.matchesRequested(turnOff)) {
-                try {
-                    Thread.sleep(50)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-                confirmedState = getSensorsOffState(context)
-            }
-
+            val confirmedState = getSensorsOffState(context)
             val verified = confirmedState.matchesRequested(turnOff)
             if (!verified) {
                 Log.w(TAG, "Read-back verification failed for setSensorsOffState: requested=$turnOff, actual=$confirmedState. Success will NOT be claimed.")
@@ -806,16 +773,7 @@ object ShizukuManager {
             }
 
             // 2. Authoritative read-back verification
-            var confirmedState = getIndividualSensorState(context, sensorId)
-            if (!confirmedState.matchesRequested(turnOff)) {
-                try {
-                    Thread.sleep(50)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-                confirmedState = getIndividualSensorState(context, sensorId)
-            }
-
+            val confirmedState = getIndividualSensorState(context, sensorId)
             val verified = confirmedState.matchesRequested(turnOff)
             if (!verified) {
                 Log.w(TAG, "Read-back verification failed for sensor $sensorId: requested=$turnOff, actual=$confirmedState. Success will NOT be claimed.")
@@ -870,18 +828,8 @@ object ShizukuManager {
             }
 
             // 3. Authoritative read-back verification
-            var confirmedCam = getIndividualSensorState(context, "camera")
-            var confirmedMic = getIndividualSensorState(context, "mic")
-            if (!confirmedCam.matchesRequested(turnOff) || !confirmedMic.matchesRequested(turnOff)) {
-                try {
-                    Thread.sleep(50)
-                } catch (e: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-                confirmedCam = getIndividualSensorState(context, "camera")
-                confirmedMic = getIndividualSensorState(context, "mic")
-            }
-
+            val confirmedCam = getIndividualSensorState(context, "camera")
+            val confirmedMic = getIndividualSensorState(context, "mic")
             val verified = confirmedCam.matchesRequested(turnOff) && confirmedMic.matchesRequested(turnOff)
             if (!verified) {
                 Log.w(TAG, "Read-back verification failed for cam/mic: requested=$turnOff, cam=$confirmedCam, mic=$confirmedMic. Success will NOT be claimed.")

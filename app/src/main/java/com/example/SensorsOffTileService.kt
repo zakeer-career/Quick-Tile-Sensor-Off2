@@ -1,8 +1,6 @@
 package com.example
 
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.database.ContentObserver
 import android.graphics.drawable.Icon
 import android.net.Uri
@@ -34,11 +32,10 @@ class SensorsOffTileService : TileService() {
 
     companion object {
         private const val TAG = "SensorsOffTileService"
-        @Volatile
-        private var pendingTargetState: Boolean? = null
-        @Volatile
-        private var pendingTargetExpiryTimeMs: Long = 0L
     }
+
+    @Volatile private var pendingTargetState: Boolean? = null
+    @Volatile private var pendingTargetExpiryTimeMs: Long = 0L
 
     private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var listeningJob: kotlinx.coroutines.Job? = null
@@ -372,38 +369,16 @@ class SensorsOffTileService : TileService() {
         }
         val target = !isCurrentlyActive
 
-        // 3. Privilege availability check with graceful await & recovery
+        // 3. Privilege availability check - immediate on-demand check (zero polling/waiting)
         val hasPrivilege = ShizukuManager.isPrivilegeAvailable(applicationContext)
         if (!hasPrivilege) {
             TileLogManager.logTileEvent(
                 applicationContext,
                 "QS Tile Tap Event",
-                "Touch detected while waiting for Shizuku. Attempting connection...",
-                LogLevel.INFO
+                "Touch detected while Shizuku/Root is unavailable.",
+                LogLevel.WARN
             )
-            val tile = qsTile
-            if (tile != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                tile.subtitle = "Connecting to Shizuku..."
-                tile.updateTile()
-            }
-            serviceScope.launch(Dispatchers.IO) {
-                // Await up to 1500ms in case Shizuku binder is currently negotiating after boot
-                val connected = ShizukuManager.awaitShizukuBinder(1500L)
-                if (connected) {
-                    withContext(Dispatchers.Main) {
-                        pendingTargetState = target
-                        pendingTargetExpiryTimeMs = System.currentTimeMillis() + 2000L
-                        updateTileState(target)
-                    }
-                    toggleChannel.trySend(Pair(target, clickTime))
-                } else {
-                    withContext(Dispatchers.Main) {
-                        pendingTargetState = null
-                        refreshTileImmediately()
-                        launchShizukuOrApp()
-                    }
-                }
-            }
+            updateTileState(SensorPrivacyState.UNKNOWN)
             return
         }
 
@@ -423,37 +398,6 @@ class SensorsOffTileService : TileService() {
 
         // 6. Asynchronous hardware toggle via conflated worker loop
         toggleChannel.trySend(Pair(target, clickTime))
-    }
-
-    private fun launchShizukuOrApp() {
-        TileLogManager.logTileEvent(
-            applicationContext,
-            "Shizuku Required",
-            "Shizuku is not running after restart. Launching Shizuku helper.",
-            LogLevel.WARN
-        )
-        try {
-            val intent = packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
-                ?: Intent(this, MainActivity::class.java).apply {
-                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                }
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                val pi = PendingIntent.getActivity(
-                    this,
-                    0,
-                    intent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-                startActivityAndCollapse(pi)
-            } else {
-                @Suppress("DEPRECATION")
-                startActivityAndCollapse(intent)
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to launch Shizuku: ${e.message}")
-        }
     }
 
     private fun updateTileState(state: SensorPrivacyState) {

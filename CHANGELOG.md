@@ -14,36 +14,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - **Lifecycle Volatility & Process Reclamation**:
   - Android `SystemUI` frequently creates, destroys, and recreates `TileService` instances during user shade expansion, process death, Doze mode, and memory reclamation.
   - Previous implementations risked treating transient state uncertainties (such as temporary Shizuku disconnections or `SensorPrivacyState.UNKNOWN`) as permanent tile unavailability (`Tile.STATE_UNAVAILABLE`), which disabled user interaction in the QS shade.
-- **On-Demand Dependency Reconnection**:
-  - A newly recreated `TileService` instance must cleanly reconstruct its visual caches and verify Shizuku/Root connectivity without assuming persistent in-memory variables from previous process lifetimes or relying on background keep-alive services.
+- **Elimination of Polling Loops & Boot Pre-Warming**:
+  - `ShizukuManager.awaitShizukuBinder()` previously relied on timed delay loops. Polling architectures are fragile under aggressive CPU throttling and can block the QS shade.
+  - Boot-time broadcast receivers attempting to pre-warm the TileService with `requestListeningState()` violated pure on-demand design principles and created unnecessary background execution at system boot.
 - **Force-Stop vs Normal Process Reclamation Clarification**:
   - Android Force-Stop places the package in a system-level stopped state (`FLAG_STOPPED`), preventing `TileService` or `BroadcastReceiver` instantiation until the user manually launches the app.
   - Normal process reclamation (LRU kill, Doze) allows `SystemUI` to rebind `TileService` on demand.
 
 #### Root Cause
-- Third-party tile services are subject to Android's strict low-memory lifecycle. Process death and instance recreation are standard Android OS behaviors. Treating unverified state as `STATE_UNAVAILABLE` broke tile responsiveness, and attempting to solve lifecycle issues with background daemons violates Android background execution limits and drains battery.
+- Third-party tile services are subject to Android's strict low-memory lifecycle. Process death and instance recreation are standard Android OS behaviors. Treating unverified state as `STATE_UNAVAILABLE` broke tile responsiveness, and attempting to solve lifecycle issues with background daemons or boot pre-warming violates Android background execution limits.
+- Polling for IPC binders introduces CPU churn and potential UI delays. Shizuku provides native sticky binder listeners that communicate connection events directly without polling.
 - Android's security architecture intentionally disables all component execution following a Force-Stop until explicit user interaction.
 
 #### Code Changes
 - `app/src/main/java/com/example/SensorsOffTileService.kt`:
+  - Removed `launchShizukuOrApp()` invocation and helper method from the `onClick()` execution path when unprivileged; when privilege is unavailable, the tile safely logs a warning and updates visual state to `SensorPrivacyState.UNKNOWN` without popping up external activities or collapsing the notification shade unexpectedly.
+  - Removed unused `PendingIntent` and `Intent` imports.
   - Enforced correct state mapping: `SensorPrivacyState.UNKNOWN` maps to `Tile.STATE_INACTIVE` with a descriptive "State Unknown" subtitle instead of `Tile.STATE_UNAVAILABLE`, keeping the tile fully interactive for subsequent user recovery taps.
+  - Converted `pendingTargetState` and `pendingTargetExpiryTimeMs` from static companion object variables to instance variables, ensuring each new `TileService` instance starts from pristine state.
+  - Eliminated `awaitShizukuBinder()` polling from `onClick()`, implementing immediate on-demand privilege checking and prompt handling.
   - Reconstructed runtime dependencies idempotently in `onTileAdded()`, `onStartListening()`, and `onClick()`.
   - Implemented asynchronous authoritative state query on `onTileAdded()` and `onStartListening()` without blocking Main thread rendering.
   - Cleaned up instance resources on `onTileRemoved()` and `onDestroy()`.
   - Added PID-aware lifecycle logging for `onCreate()`, `onStartListening()`, `onStopListening()`, `onClick()`, and `onDestroy()`.
 - `app/src/main/java/com/example/ShizukuManager.kt`:
+  - Removed `awaitShizukuBinder()` and all delay polling loops from sticky binder listeners.
+  - Removed synchronous `Thread.sleep()` retry blocks from state toggle verification logic.
   - Added `invalidateSensorPrivacyBinder()` and null checks for dead/restarted binders.
-  - Added graceful 1500ms binder await in `onClick()` when Shizuku service is starting post-boot.
-- `app/src/main/java/com/example/TileLogManager.kt`:
-  - Added process session tracking (`processTag` / `PID`) to telemetry logs to diagnose process death and instance recreation.
-  - Added `logLifecycleEvent()` and `logAuthoritativeState()` helpers.
+- `app/src/main/java/com/example/SensorsOffApp.kt`:
+  - Removed speculative asynchronous root pre-warming coroutine from `onCreate()`, keeping application startup strictly lightweight and synchronous.
+- `app/src/main/AndroidManifest.xml`:
+  - Removed `RECEIVE_BOOT_COMPLETED` permission and deleted `BootCompletedReceiver`, ensuring zero background footprint or process creation at boot.
 - `app/src/test/java/com/example/ExampleRobolectricTest.kt`:
-  - Added 53 comprehensive unit tests validating tile initialization from cold start, `onStartListening()` dependency recovery, graceful handling of dead Shizuku binders, non-authoritative UNKNOWN state handling, manifest inspection for zero foreground services/daemons, and no self-disabling components.
+  - Added and updated comprehensive unit tests validating tile initialization from cold start, `onStartListening()` dependency recovery, graceful handling of dead Shizuku binders, non-authoritative UNKNOWN state handling, manifest inspection for zero foreground services/daemons/boot-receivers, and no self-disabling components.
 - `README.md`:
-  - Added dedicated "Tile Resilience" section explaining the zero-daemon lifecycle recovery model, on-demand Shizuku binding, and documented OEM/Battery Saver boundaries.
+  - Documented Tile Resilience architecture, on-demand Shizuku binding, force-stop behavior, and OEM/battery boundaries.
 
 #### Telemetry & Verification
-- Unit tests: 53/53 passed successfully via Robolectric.
+- Unit tests: 54/54 passed successfully via Robolectric.
 - Compilation: Build succeeded with 0 errors.
 
 ---

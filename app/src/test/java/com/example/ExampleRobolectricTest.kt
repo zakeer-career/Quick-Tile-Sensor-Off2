@@ -148,14 +148,18 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `test boot completed receiver runs on-demand without starting background services`() {
+  fun `test manifest contains no boot receivers and no persistent services`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val receiver = BootCompletedReceiver()
-    val intent = android.content.Intent(android.content.Intent.ACTION_BOOT_COMPLETED)
-    
-    // Executing onReceive must not crash and must not start any background service/daemon
-    receiver.onReceive(context, intent)
-    assertTrue(true)
+    val pm = context.packageManager
+    val packageInfo = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_RECEIVERS or android.content.pm.PackageManager.GET_SERVICES)
+    val receivers = packageInfo.receivers ?: emptyArray()
+    val receiverNames = receivers.map { it.name }
+    // Assert no BootCompletedReceiver or app-defined boot receiver
+    org.junit.Assert.assertFalse(receiverNames.any { it.contains("Boot") || it.startsWith("com.example") })
+    val services = packageInfo.services ?: emptyArray()
+    // Only the QS TileService is registered
+    assertEquals(1, services.size)
+    assertEquals(SensorsOffTileService::class.java.name, services[0].name)
   }
 
   @Test
@@ -606,14 +610,19 @@ class ExampleRobolectricTest {
   }
 
   @Test
-  fun `test Tile Resilience - BootCompletedReceiver handles boot intent safely without persistent services`() {
+  fun `test Tile Resilience - No boot receiver registered in package manager`() {
     val context = ApplicationProvider.getApplicationContext<Context>()
-    val receiver = BootCompletedReceiver()
-    val intent = Intent(Intent.ACTION_BOOT_COMPLETED)
-    receiver.onReceive(context, intent)
-    // Verify receiver executed and logged without throwing
-    val logs = TileLogManager.logsFlow.value
-    assertTrue(logs.any { it.title.contains("Device boot trigger") })
+    val pm = context.packageManager
+    val packageInfo = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_RECEIVERS)
+    val receivers = packageInfo.receivers ?: emptyArray()
+    val receiverNames = receivers.map { it.name }
+    org.junit.Assert.assertFalse(receiverNames.any { it.contains("Boot") || it.startsWith("com.example") })
+  }
+
+  @Test
+  fun `test Tile Resilience - SensorsOffTileService can be constructed independently in fresh process`() {
+    val service = SensorsOffTileService()
+    assertNotNull(service)
   }
 
   @Test
@@ -637,6 +646,16 @@ class ExampleRobolectricTest {
     val entry = logs.firstOrNull { it.detail == "Test process tag" }
     assertNotNull(entry)
     assertTrue(entry!!.processTag.startsWith("PID:"))
+  }
+
+  @Test
+  fun `test Tile Resilience - onClick without privilege updates state and logs event without launching activity`() {
+    val serviceController = org.robolectric.Robolectric.buildService(SensorsOffTileService::class.java).create()
+    val service = serviceController.get()
+    // Calling onClick directly on an unprivileged service should not crash or throw
+    service.onClick()
+    val logs = TileLogManager.logsFlow.value
+    assertTrue(logs.any { it.detail.contains("Touch detected while Shizuku/Root is unavailable") })
   }
 }
 

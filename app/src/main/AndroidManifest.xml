@@ -4,7 +4,6 @@
     android:installLocation="internalOnly">
 
     <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <queries>
         <package android:name="moe.shizuku.privileged.api" />
@@ -61,17 +60,6 @@
                 android:name="android.service.quicksettings.ACTIVE_TILE"
                 android:value="true" />
         </service>
-
-        <receiver
-            android:name=".BootCompletedReceiver"
-            android:exported="true"
-            android:enabled="true">
-            <intent-filter>
-                <action android:name="android.intent.action.BOOT_COMPLETED" />
-                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-                <action android:name="android.intent.action.USER_PRESENT" />
-            </intent-filter>
-        </receiver>
 
     </application>
 
