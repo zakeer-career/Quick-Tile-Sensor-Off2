@@ -6,7 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
-- [v2.8.3.beta - Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery](#v283beta---quick-settings-tile-resilience-zero-daemon-lifecycle-recovery)
+- [v2.8.3 - Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery](#v283---quick-settings-tile-resilience-zero-daemon-lifecycle-recovery)
 - [v2.8.2 - API-Version-Specific Binder Transactions & Documentation Alignment](#v282---api-version-specific-binder-transactions--documentation-alignment)
 - [v2.8.1 - Production Release: Global Sensor Privacy State Verification, State Isolation & Version Promotion](#v281---production-release-global-sensor-privacy-state-verification-state-isolation--version-promotion)
 - [v2.8.0 - Production Release: Version Promotion & Architecture Hardening](#v280---production-release-version-promotion--architecture-hardening)
@@ -46,7 +46,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ---
 
-### [v2.8.3.beta] - Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery
+### [v2.8.3] - Quick Settings Tile Resilience: Zero-Daemon Lifecycle Recovery
 
 #### Problem Analysis
 - **TileService Process Reclamation & Transient State Handling**:

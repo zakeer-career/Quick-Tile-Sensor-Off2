@@ -11,7 +11,7 @@ Each commit entry includes:
 
 ---
 
-### [v2.8.3.beta] - 2026-09-23
+### [v2.8.3] - 2026-09-23
 
 ```git
 feat(tile): implement zero-daemon Tile Resilience and on-demand lifecycle recovery

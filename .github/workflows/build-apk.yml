@@ -2,7 +2,7 @@ name: Build SensorsOff APK & Auto Release
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "Beta", "beta" ]
     tags:
       - 'v*'
     paths-ignore:
@@ -11,7 +11,7 @@ on:
       - 'docs/**'
       - '.gitignore'
   pull_request:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "Beta", "beta" ]
     paths-ignore:
       - '**.md'
       - 'README.md'
