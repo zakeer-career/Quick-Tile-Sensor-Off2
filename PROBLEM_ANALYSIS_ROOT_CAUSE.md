@@ -52,19 +52,25 @@ This document serves as the canonical technical post-mortem and engineering anal
 - **TileService Process Reclamation & Transient State Handling**:
   - Android `SystemUI` instantiates `TileService` on demand and frequently destroys the service when the QS shade closes or when the system experiences memory pressure.
   - Previous implementations mapped `SensorPrivacyState.UNKNOWN` to `Tile.STATE_UNAVAILABLE`, which caused SystemUI to visually grey out the tile and block user tap gestures during transient state inquiries or brief Shizuku disconnections.
+- **Force-Stop vs Normal Process Reclamation Behavior**:
+  - Users observed that after force-stopping the app from Android Settings, the tile stops responding. Under Android OS architecture, a Force-Stop transitions the package into a stopped state (`FLAG_STOPPED`), revoking execution until the user explicitly taps the launcher icon.
+  - After reboot, if Shizuku has not yet started or is delayed, tapping the tile should gracefully guide the user or attempt binder acquisition rather than failing silently.
 - **Dependency Reconstruction Across Process Boundaries**:
   - A newly instantiated `TileService` must not assume persistent static state from previous process lifetimes. All dependencies (Shizuku IPC listeners, visual icon caches, and hardware state observers) must be initialized cleanly and idempotently upon every lifecycle invocation.
 
 #### Root Cause
 - Third-party `TileService` components do not have process persistence guarantees in Android. Attempting to force process persistence via foreground services or background daemons violates platform standards, drains battery, and conflicts with Android 14+ background execution policies.
+- Android's security sandbox explicitly suspends all components upon Force-Stop until the user explicitly restarts the package.
 - Mapping UNKNOWN states to `Tile.STATE_UNAVAILABLE` broke the user recovery path because disabled tiles cannot receive `onClick()` events to trigger re-authorization or re-connection.
 
 #### Engineered Resolution & Impact
 - Enforced clean state semantics: `SensorPrivacyState.UNKNOWN` maps to `Tile.STATE_INACTIVE` with subtitle `"State Unknown"`, ensuring the tile remains interactive in SystemUI.
 - Refactored `onTileAdded()`, `onStartListening()`, and `onClick()` in `SensorsOffTileService` to idempotently reconstruct runtime dependencies (`ShizukuManager.initialize()` and `reloadVisualConfig()`) without blocking the Main thread.
+- Added graceful 1500ms binder await in `onClick()` for post-boot scenarios where Shizuku is starting up.
 - Implemented asynchronous authoritative state queries on `onStartListening()` and `onTileAdded()` that refresh the tile in real-time when the QS shade expands.
+- Added process session telemetry (`processTag` / `PID`) to diagnose cold starts and service recreation cycles.
 - Kept the architecture 100% on-demand with zero background daemons, zero foreground services, zero wake locks, and zero battery consumption while idle.
-- Added comprehensive unit tests in `ExampleRobolectricTest` validating cold-start instantiation, state refresh across service instance recreations, and zero non-Tile services in `AndroidManifest.xml`.
+- Added 53 comprehensive unit tests in `ExampleRobolectricTest` validating cold-start instantiation, state refresh across service instance recreations, manifest purity, and no self-disabling components.
 
 ---
 

@@ -88,11 +88,11 @@ class SensorsOffTileService : TileService() {
             Log.d(TAG, "ContentObserver registration note: ${e.message}")
         }
 
-        TileLogManager.logTileEvent(
+        TileLogManager.logLifecycleEvent(
             applicationContext,
-            "Tile Service Created",
-            "SensorsOffTileService initialized with zero-allocation cache and ContentObserver",
-            LogLevel.DEBUG
+            "TileService",
+            "onCreate",
+            "SensorsOffTileService initialized with ContentObserver and Conflated Channel"
         )
 
         // Launch single serialized toggle consumer to eliminate concurrent shell process pileups
@@ -162,11 +162,11 @@ class SensorsOffTileService : TileService() {
         } catch (e: Exception) {
             Log.d(TAG, "ContentObserver unregister note: ${e.message}")
         }
-        TileLogManager.logTileEvent(
+        TileLogManager.logLifecycleEvent(
             applicationContext,
-            "Tile Service Destroyed",
-            "SensorsOffTileService unbinding cleanly",
-            LogLevel.DEBUG
+            "TileService",
+            "onDestroy",
+            "SensorsOffTileService unbinding cleanly / destroying instance"
         )
         listeningJob?.cancel()
         toggleChannel.close()
@@ -253,6 +253,13 @@ class SensorsOffTileService : TileService() {
         super.onStartListening()
         listeningJob?.cancel()
 
+        TileLogManager.logLifecycleEvent(
+            applicationContext,
+            "TileService",
+            "onStartListening",
+            "Quick Settings shade opened / tile listening started"
+        )
+
         // Reconstruct / verify runtime dependencies on each listening cycle
         ShizukuManager.initialize(applicationContext)
         reloadVisualConfig()
@@ -275,6 +282,19 @@ class SensorsOffTileService : TileService() {
                     ShizukuManager.getSensorsOffState(applicationContext)
                 }
 
+                val mappedTileState = when (currentState) {
+                    SensorPrivacyState.ENABLED -> Tile.STATE_ACTIVE
+                    SensorPrivacyState.DISABLED -> Tile.STATE_INACTIVE
+                    SensorPrivacyState.UNKNOWN -> Tile.STATE_INACTIVE
+                }
+
+                TileLogManager.logAuthoritativeState(
+                    applicationContext,
+                    currentState,
+                    mappedTileState,
+                    "onStartListening hardware query"
+                )
+
                 if (pendingTargetState == null || System.currentTimeMillis() >= pendingTargetExpiryTimeMs) {
                     withContext(Dispatchers.Main) {
                         if (currentState.isAuthoritative) {
@@ -296,6 +316,12 @@ class SensorsOffTileService : TileService() {
 
     override fun onStopListening() {
         super.onStopListening()
+        TileLogManager.logLifecycleEvent(
+            applicationContext,
+            "TileService",
+            "onStopListening",
+            "Quick Settings shade closed / tile listening stopped"
+        )
         listeningJob?.cancel()
     }
 
@@ -326,6 +352,13 @@ class SensorsOffTileService : TileService() {
         // Re-ensure dependencies and config upon click
         ShizukuManager.initialize(applicationContext)
         reloadVisualConfig()
+
+        TileLogManager.logLifecycleEvent(
+            applicationContext,
+            "TileService",
+            "onClick",
+            "User tapped Quick Settings tile"
+        )
 
         // 1. Abort any background listening query
         listeningJob?.cancel()

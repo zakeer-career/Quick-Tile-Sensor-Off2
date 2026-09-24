@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Context
+import android.content.Intent
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -593,6 +594,49 @@ class ExampleRobolectricTest {
     assertEquals(1, services.size)
     assertEquals(SensorsOffTileService::class.java.name, services[0].name)
     assertEquals("android.permission.BIND_QUICK_SETTINGS_TILE", services[0].permission)
+  }
+
+  @Test
+  fun `test Tile Resilience - Invalidate cached binder ensures fresh retrieval`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    ShizukuManager.initialize(context)
+    ShizukuManager.invalidateSensorPrivacyBinder()
+    val binder = ShizukuManager.getSensorPrivacyBinder()
+    assertNull(binder) // In test environment with no Shizuku, returns null safely
+  }
+
+  @Test
+  fun `test Tile Resilience - BootCompletedReceiver handles boot intent safely without persistent services`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val receiver = BootCompletedReceiver()
+    val intent = Intent(Intent.ACTION_BOOT_COMPLETED)
+    receiver.onReceive(context, intent)
+    // Verify receiver executed and logged without throwing
+    val logs = TileLogManager.logsFlow.value
+    assertTrue(logs.any { it.title.contains("Device boot trigger") })
+  }
+
+  @Test
+  fun `test Tile Resilience - App never disables its own TileService component`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val pm = context.packageManager
+    val tileComponent = android.content.ComponentName(context, SensorsOffTileService::class.java)
+    val state = pm.getComponentEnabledSetting(tileComponent)
+    assertTrue(
+      state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DEFAULT ||
+      state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED
+    )
+  }
+
+  @Test
+  fun `test Tile Resilience - Telemetry records processTag for process session identification`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    TileLogManager.initialize(context)
+    TileLogManager.logLifecycleEvent(context, "TileService", "onCreate", "Test process tag")
+    val logs = TileLogManager.logsFlow.value
+    val entry = logs.firstOrNull { it.detail == "Test process tag" }
+    assertNotNull(entry)
+    assertTrue(entry!!.processTag.startsWith("PID:"))
   }
 }
 

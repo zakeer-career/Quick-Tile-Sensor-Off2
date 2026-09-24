@@ -50,7 +50,8 @@ data class LogEntry(
     val title: String,
     val detail: String = "",
     val executionMs: Long? = null,
-    val fullDateTime: String = ""
+    val fullDateTime: String = "",
+    val processTag: String = ""
 ) {
     fun getRelativeTime(nowMs: Long = System.currentTimeMillis()): String {
         val diff = (nowMs - timestamp).coerceAtLeast(0)
@@ -75,9 +76,10 @@ data class LogEntry(
     fun toFormattedString(prevTimestamp: Long? = null): String {
         val execStr = if (executionMs != null) " [Exec: ${executionMs}ms]" else ""
         val deltaStr = if (prevTimestamp != null) " [Δ: ${getDeltaTime(prevTimestamp)}]" else ""
+        val procStr = if (processTag.isNotBlank()) " [$processTag]" else ""
         val detailStr = if (detail.isNotBlank()) "\n  ↳ $detail" else ""
         val dateTimeStr = if (fullDateTime.isNotBlank()) fullDateTime else formattedTime
-        return "[$dateTimeStr]$deltaStr [${category.badgeText}] [${level.name}] $title$execStr$detailStr"
+        return "[$dateTimeStr]$deltaStr$procStr [${category.badgeText}] [${level.name}] $title$execStr$detailStr"
     }
 }
 
@@ -129,6 +131,9 @@ object TileLogManager {
     private val timeFormat = ThreadLocal.withInitial { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
     private val fullDateFormat = ThreadLocal.withInitial { SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()) }
 
+    val currentPid: Int = android.os.Process.myPid()
+    val processTag: String = "PID:$currentPid"
+
     private fun formatTime(timestamp: Long): String = timeFormat.get()?.format(Date(timestamp)) ?: ""
     private fun formatFullDate(timestamp: Long): String = fullDateFormat.get()?.format(Date(timestamp)) ?: ""
 
@@ -168,7 +173,8 @@ object TileLogManager {
                             title = obj.getString("title"),
                             detail = obj.optString("detail", ""),
                             executionMs = if (obj.has("executionMs")) obj.getLong("executionMs") else null,
-                            fullDateTime = obj.optString("fullDateTime", formatFullDate(ts))
+                            fullDateTime = obj.optString("fullDateTime", formatFullDate(ts)),
+                            processTag = obj.optString("processTag", "")
                         )
                     )
                 }
@@ -214,6 +220,7 @@ object TileLogManager {
                         put("level", entry.level.name)
                         put("title", entry.title)
                         put("detail", entry.detail)
+                        put("processTag", entry.processTag)
                         entry.executionMs?.let { put("executionMs", it) }
                     }
                     array.put(obj)
@@ -261,10 +268,11 @@ object TileLogManager {
             title = title,
             detail = detail,
             executionMs = executionMs,
-            fullDateTime = fullFormatted
+            fullDateTime = fullFormatted,
+            processTag = processTag
         )
 
-        Log.d(TAG, "[${category.badgeText}] $title | $detail")
+        Log.d(TAG, "[$processTag] [${category.badgeText}] $title | $detail")
 
         _logsFlow.update { current ->
             (listOf(entry) + current).take(MAX_LOGS)
@@ -338,6 +346,42 @@ object TileLogManager {
         level: LogLevel = LogLevel.INFO
     ) {
         log(context, LogCategory.SYSTEM, level, title, detail)
+    }
+
+    fun logLifecycleEvent(
+        context: Context,
+        component: String,
+        event: String,
+        detail: String = "",
+        level: LogLevel = LogLevel.INFO
+    ) {
+        log(context, LogCategory.TILE, level, "$component: $event", detail)
+    }
+
+    fun logAuthoritativeState(
+        context: Context,
+        state: SensorPrivacyState,
+        mappedTileState: Int,
+        detail: String = ""
+    ) {
+        val stateName = when (state) {
+            SensorPrivacyState.ENABLED -> "ENABLED (Sensors Off)"
+            SensorPrivacyState.DISABLED -> "DISABLED (Sensors On)"
+            SensorPrivacyState.UNKNOWN -> "UNKNOWN (Unverified)"
+        }
+        val tileStateName = when (mappedTileState) {
+            Tile.STATE_ACTIVE -> "STATE_ACTIVE"
+            Tile.STATE_INACTIVE -> "STATE_INACTIVE"
+            Tile.STATE_UNAVAILABLE -> "STATE_UNAVAILABLE"
+            else -> "STATE_$mappedTileState"
+        }
+        log(
+            context,
+            LogCategory.SENSOR,
+            if (state.isAuthoritative) LogLevel.SUCCESS else LogLevel.INFO,
+            "Authoritative Sensor State: $stateName",
+            "Mapped to Quick Settings: $tileStateName${if (detail.isNotBlank()) " | $detail" else ""}"
+        )
     }
 
     fun clear(context: Context) {

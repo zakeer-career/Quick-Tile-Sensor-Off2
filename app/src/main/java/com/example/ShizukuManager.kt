@@ -353,6 +353,13 @@ object ShizukuManager {
     }
 
     /**
+     * Explicitly invalidates any cached sensor privacy IBinder reference.
+     */
+    fun invalidateSensorPrivacyBinder() {
+        cachedSensorPrivacyBinder = null
+    }
+
+    /**
      * Obtains the raw sensor_privacy IBinder using Shizuku's Binder Wrapper.
      * Direct Binder transactions execute with fast in-memory IPC using public android.os.IBinder APIs,
      * completely eliminating Android Hidden API linking errors.
@@ -362,20 +369,27 @@ object ShizukuManager {
         if (existing != null && existing.isBinderAlive) {
             return existing
         }
+        cachedSensorPrivacyBinder = null
         if (!isShizukuRunning() || !isShizukuAuthorized()) return null
         return try {
             val binder = SystemServiceHelper.getSystemService("sensor_privacy") ?: return null
+            if (!binder.isBinderAlive) {
+                return null
+            }
             val wrapper = ShizukuBinderWrapper(binder)
             cachedSensorPrivacyBinder = wrapper
             wrapper
         } catch (e: SecurityException) {
             Log.w(TAG, "SecurityException acquiring sensor_privacy binder: ${e.message}")
+            cachedSensorPrivacyBinder = null
             null
         } catch (e: RemoteException) {
             Log.w(TAG, "RemoteException acquiring sensor_privacy binder: ${e.message}")
+            cachedSensorPrivacyBinder = null
             null
         } catch (e: Exception) {
             Log.d(TAG, "Could not acquire sensor_privacy binder via Shizuku: ${e.message}")
+            cachedSensorPrivacyBinder = null
             null
         }
     }

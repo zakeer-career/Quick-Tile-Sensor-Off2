@@ -16,10 +16,16 @@ class SensorsOffApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d("SensorsOffApp", "SensorsOff Application process initialized")
+        Log.d("SensorsOffApp", "SensorsOff Application process initialized [PID: ${android.os.Process.myPid()}]")
         try {
             TileLogManager.initialize(this)
             ShizukuManager.initialize(this)
+            TileLogManager.logLifecycleEvent(
+                this,
+                "Application",
+                "Process Created",
+                "Fresh process initialized (zero daemons/services running)"
+            )
             
             // Pre-warm root state asynchronously to prevent cold-start UI stalls or false-negatives
             kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {

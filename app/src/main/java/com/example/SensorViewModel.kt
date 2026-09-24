@@ -226,7 +226,7 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             val stateName = when (privacyState) {
                 SensorPrivacyState.ENABLED -> "STATE_ACTIVE (2)"
                 SensorPrivacyState.DISABLED -> "STATE_INACTIVE (1)"
-                SensorPrivacyState.UNKNOWN -> "STATE_UNAVAILABLE (0)"
+                SensorPrivacyState.UNKNOWN -> "STATE_INACTIVE (Unknown)"
             }
             TileLogManager.updateTileDiagnostics(
                 context,
