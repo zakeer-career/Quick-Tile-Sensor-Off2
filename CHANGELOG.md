@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.8.3] - 2026-09-23
+
+### Feature Release: Quick Settings Tile Resilience (Zero-Daemon Lifecycle Recovery)
+
+#### Problem Analysis
+- **Lifecycle Volatility & Process Reclamation**:
+  - Android `SystemUI` frequently creates, destroys, and recreates `TileService` instances during user shade expansion, process death, Doze mode, and memory reclamation.
+  - Previous implementations risked treating transient state uncertainties (such as temporary Shizuku disconnections or `SensorPrivacyState.UNKNOWN`) as permanent tile unavailability (`Tile.STATE_UNAVAILABLE`), which disabled user interaction in the QS shade.
+- **On-Demand Dependency Reconnection**:
+  - A newly recreated `TileService` instance must cleanly reconstruct its visual caches and verify Shizuku/Root connectivity without assuming persistent in-memory variables from previous process lifetimes or relying on background keep-alive services.
+
+#### Root Cause
+- Third-party tile services are subject to Android's strict low-memory lifecycle. Process death and instance recreation are standard Android OS behaviors. Treating unverified state as `STATE_UNAVAILABLE` broke tile responsiveness, and attempting to solve lifecycle issues with background daemons violates Android background execution limits and drains battery.
+
+#### Code Changes
+- `app/src/main/java/com/example/SensorsOffTileService.kt`:
+  - Enforced correct state mapping: `SensorPrivacyState.UNKNOWN` maps to `Tile.STATE_INACTIVE` with a descriptive "State Unknown" subtitle instead of `Tile.STATE_UNAVAILABLE`, keeping the tile fully interactive for subsequent user recovery taps.
+  - Reconstructed runtime dependencies idempotently in `onTileAdded()`, `onStartListening()`, and `onClick()`.
+  - Implemented asynchronous authoritative state query on `onTileAdded()` and `onStartListening()` without blocking Main thread rendering.
+  - Ensured `onTileRemoved()` cleanly cancels listening coroutines and cleans up instance references with zero background footprint.
+- `app/src/test/java/com/example/ExampleRobolectricTest.kt`:
+  - Added dedicated unit tests validating tile initialization from cold start, `onStartListening()` dependency recovery, graceful handling of dead Shizuku binders, non-authoritative UNKNOWN state handling, and zero background/foreground service manifest declarations.
+- `README.md`:
+  - Added dedicated "Tile Resilience" section explaining the zero-daemon lifecycle recovery model, on-demand Shizuku binding, and documented OEM/Battery Saver boundaries.
+
+#### Telemetry & Verification
+- Unit tests: 49/49 passed successfully via Robolectric.
+- Compilation: Build succeeded with 0 errors.
+
+---
+
 ## [2.8.2] - 2026-09-22
 
 ### Targeted Fix: Strict API-Version-Specific Binder Transactions & Documentation Alignment

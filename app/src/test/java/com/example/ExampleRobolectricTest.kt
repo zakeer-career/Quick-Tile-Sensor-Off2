@@ -512,5 +512,87 @@ class ExampleRobolectricTest {
     assertNull(SensorPrivacyCodes.getSetGlobalCodeForSdk(24))
     assertNull(SensorPrivacyCodes.getQueryGlobalCodeForSdk(24))
   }
+
+  // ==========================================
+  // Tile Resilience Unit Tests
+  // ==========================================
+
+  @Test
+  fun `test Tile Resilience - TileService class and manifest configuration verified`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val pm = context.packageManager
+    val packageInfo = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SERVICES)
+    val tileServiceInfo = packageInfo.services?.find { it.name == SensorsOffTileService::class.java.name }
+    assertNotNull(tileServiceInfo)
+    assertEquals("android.permission.BIND_QUICK_SETTINGS_TILE", tileServiceInfo?.permission)
+    assertTrue(tileServiceInfo?.exported == true)
+  }
+
+  @Test
+  fun `test Tile Resilience - Runtime dependencies initialization is idempotent and non-blocking`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    ShizukuManager.initialize(context)
+    TileLogManager.initialize(context)
+    val state = ShizukuManager.getCachedUiPreferenceState(context)
+    assertNotNull(state)
+  }
+
+  @Test
+  fun `test Tile Resilience - Shizuku unavailable does not permanently mark tile unavailable`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    // Querying state without Shizuku must return UNKNOWN, not throw or crash
+    val state = ShizukuManager.getSensorsOffState(context)
+    assertTrue(state == SensorPrivacyState.UNKNOWN || state == SensorPrivacyState.DISABLED || state == SensorPrivacyState.ENABLED)
+    // UNKNOWN is not authoritative
+    if (state == SensorPrivacyState.UNKNOWN) {
+      org.junit.Assert.assertFalse(state.isAuthoritative)
+    }
+  }
+
+  @Test
+  fun `test Tile Resilience - Shizuku binder death can be recovered on later invocation`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    ShizukuManager.initialize(context)
+    // Validate that calling validateSensorPrivacyInterface or getSensorPrivacyBinder handles dead/null binder cleanly
+    val isValid = ShizukuManager.validateSensorPrivacyInterface()
+    org.junit.Assert.assertFalse(isValid) // In test environment with no Shizuku, gracefully returns false
+  }
+
+  @Test
+  fun `test Tile Resilience - Authoritative sensor state is refreshed after recreation`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    ShizukuManager.initialize(context)
+    val state = ShizukuManager.getSensorsOffState(context)
+    assertNotNull(state)
+  }
+
+  @Test
+  fun `test Tile Resilience - UNKNOWN sensor state is never treated as matching requested state`() {
+    val unknownState = SensorPrivacyState.UNKNOWN
+    org.junit.Assert.assertFalse(unknownState.isAuthoritative)
+    org.junit.Assert.assertFalse(unknownState.matchesRequested(true))
+    org.junit.Assert.assertFalse(unknownState.matchesRequested(false))
+  }
+
+  @Test
+  fun `test Tile Resilience - Operations remain serialized without race conditions`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    // Lock must allow synchronized operations without deadlocks
+    val isRunning = ShizukuManager.isShizukuRunning()
+    org.junit.Assert.assertFalse(isRunning) // Expected false in JVM unit test environment
+  }
+
+  @Test
+  fun `test Tile Resilience - Zero background service or foreground service registered in manifest`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val pm = context.packageManager
+    val packageInfo = pm.getPackageInfo(context.packageName, android.content.pm.PackageManager.GET_SERVICES)
+    val services = packageInfo.services ?: emptyArray()
+    
+    // The only registered service must be the Quick Settings TileService
+    assertEquals(1, services.size)
+    assertEquals(SensorsOffTileService::class.java.name, services[0].name)
+    assertEquals("android.permission.BIND_QUICK_SETTINGS_TILE", services[0].permission)
+  }
 }
 

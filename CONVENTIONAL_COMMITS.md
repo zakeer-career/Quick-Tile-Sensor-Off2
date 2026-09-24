@@ -11,6 +11,40 @@ Each commit entry includes:
 
 ---
 
+### [v2.8.3] - 2026-09-23
+
+```git
+feat(tile): implement zero-daemon Tile Resilience and on-demand lifecycle recovery
+
+Problem:
+1. Android SystemUI creates, destroys, and recreates TileService instances dynamically across process death, Doze, and memory reclamation.
+2. Previous implementations risked treating transient state uncertainties (such as temporary Shizuku disconnections or SensorPrivacyState.UNKNOWN) as permanent tile unavailability (Tile.STATE_UNAVAILABLE), disabling QS user interaction.
+3. TileService lifecycle methods needed idempotent dependency recovery without relying on persistent background services or daemons.
+
+Root Cause:
+1. Standard Android OS process management reclaims third-party application processes under memory pressure. Attempting to bypass this with daemons or foreground services violates background execution limits.
+2. Tile.STATE_UNAVAILABLE in Android SystemUI prevents user tap interactions. UNKNOWN sensor states must map to interactive STATE_INACTIVE with clear subtitles.
+
+Changes:
+- app/src/main/java/com/example/SensorsOffTileService.kt:
+  * Mapped SensorPrivacyState.UNKNOWN to Tile.STATE_INACTIVE with "State Unknown" subtitle to preserve tile interactivity.
+  * Ensured onTileAdded, onStartListening, and onClick idempotently re-initialize ShizukuManager and reload visual config.
+  * Added asynchronous authoritative state query on onTileAdded and onStartListening without main thread blocking.
+  * Cleaned up instance resources on onTileRemoved.
+- app/src/test/java/com/example/ExampleRobolectricTest.kt:
+  * Added unit tests for cold start initialization, onStartListening reconstruction, dead binder resilience, and zero manifest service bloat.
+- README.md:
+  * Documented Tile Resilience architecture, on-demand Shizuku binding, and OEM/battery boundaries.
+- app/build.gradle.kts:
+  * Bumped versionCode to 40 and versionName to 2.8.3 with com.SensorsOff applicationId preserved.
+
+Verification:
+- gradle :app:testDebugUnitTest passed (49 unit tests successful).
+- Zero foreground service or persistent background daemon used.
+```
+
+---
+
 ### [v2.8.2] - 2026-09-22
 
 ```git

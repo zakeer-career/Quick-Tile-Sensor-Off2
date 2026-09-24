@@ -6,7 +6,7 @@
 
 
 [![Platform](https://img.shields.io/badge/Platform-Android-3DDC84.svg?style=flat&logo=android)](https://www.android.com)
-[![Release](https://img.shields.io/badge/Release-v2.8.2-brightgreen.svg?style=flat)](https://github.com/LinerSRT/SensorsOff)
+[![Release](https://img.shields.io/badge/Release-v2.8.3-brightgreen.svg?style=flat)](https://github.com/LinerSRT/SensorsOff)
 [![minSdk](https://img.shields.io/badge/minSdk-24%20(Android%207.0)-blue.svg?style=flat)](https://developer.android.com/about/versions/nougat)
 [![Target API](https://img.shields.io/badge/Privacy%20API-29%2B%20(Android%2010%2B)-purple.svg?style=flat)](https://developer.android.com/about/versions/10)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
@@ -96,7 +96,19 @@ Their initial work on system sensor privacy controls on Android provided the bas
 
 ---
 
-## Privileged Permission Setup
+## Tile Resilience
+
+SensorsOff implements a robust, on-demand Quick Settings tile architecture designed to work in harmony with Android's process lifecycle:
+
+- **Zero Permanent Background Process**: SensorsOff does not run a foreground service, background daemon, keep-alive loop, or persistent wake lock. 
+- **SystemUI Lifecycle Management**: Android `SystemUI` owns the lifecycle of the Quick Settings tile, instantiating `SensorsOffTileService` on demand when the shade is opened or when the tile is tapped.
+- **On-Demand Dependency Reconstruction**: When Android recreates `SensorsOffTileService` after process death, memory reclamation, or Doze, the service reconstructs its runtime dependencies and visual caches cleanly without assuming persistent state from previous instances.
+- **On-Demand Shizuku & Root Connection**: The Shizuku IPC binder and superuser paths are queried and acquired on demand. If the Shizuku binder dies or restarts, the tile recovers on its next invocation cycle.
+- **Authoritative State Refresh**: Authoritative global sensor privacy state is asynchronously refreshed via direct Binder IPC upon lifecycle reactivation (`onStartListening()` / `onClick()`), ensuring the tile always reflects real hardware state.
+- **No Foreground Service Required**: The app operates with 0% idle battery consumption, requiring no persistent notifications or battery-saver exemptions.
+- **OEM & Battery Saver Boundaries**: While SensorsOff maximizes recovery within the standard Android `TileService` lifecycle, third-party apps cannot override aggressive vendor-specific battery killers or OEM-level restrictions that prohibit tile service instantiation.
+
+---
 
 ### Option 1: Shizuku (Recommended)
 1. Install and launch **Shizuku** on the device.

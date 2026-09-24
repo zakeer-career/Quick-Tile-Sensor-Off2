@@ -124,7 +124,7 @@ class SensorsOffTileService : TileService() {
                 val confirmedStateString = when (confirmedState) {
                     SensorPrivacyState.ENABLED -> "STATE_ACTIVE"
                     SensorPrivacyState.DISABLED -> "STATE_INACTIVE"
-                    SensorPrivacyState.UNKNOWN -> "STATE_UNAVAILABLE"
+                    SensorPrivacyState.UNKNOWN -> "STATE_UNKNOWN"
                 }
 
                 TileLogManager.logTileEvent(
@@ -214,13 +214,48 @@ class SensorsOffTileService : TileService() {
 
     override fun onTileAdded() {
         super.onTileAdded()
+        ShizukuManager.initialize(applicationContext)
         reloadVisualConfig()
         refreshTileImmediately()
+        // Asynchronously query authoritative state upon tile addition
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val currentState = if (cachedBlockMode == "cam_mic") {
+                    ShizukuManager.getCamMicCombinedState(applicationContext)
+                } else {
+                    ShizukuManager.getSensorsOffState(applicationContext)
+                }
+                withContext(Dispatchers.Main) {
+                    if (currentState.isAuthoritative) {
+                        updateTileState(currentState)
+                    }
+                }
+            } catch (e: Exception) {
+                if (e !is kotlinx.coroutines.CancellationException) {
+                    Log.d(TAG, "Tile added query note: ${e.message}")
+                }
+            }
+        }
+    }
+
+    override fun onTileRemoved() {
+        super.onTileRemoved()
+        listeningJob?.cancel()
+        TileLogManager.logTileEvent(
+            applicationContext,
+            "Tile Removed",
+            "Tile removed from active Quick Settings shade; cleaned up instance state",
+            LogLevel.DEBUG
+        )
     }
 
     override fun onStartListening() {
         super.onStartListening()
         listeningJob?.cancel()
+
+        // Reconstruct / verify runtime dependencies on each listening cycle
+        ShizukuManager.initialize(applicationContext)
+        reloadVisualConfig()
 
         val now = System.currentTimeMillis()
         if (pendingTargetState != null && now < pendingTargetExpiryTimeMs) {
@@ -228,10 +263,10 @@ class SensorsOffTileService : TileService() {
             return
         }
 
-        // 1. Immediate UI refresh from cached state
+        // 1. Immediate UI refresh from cached UI state for instant responsiveness
         refreshTileImmediately()
 
-        // 2. Fast asynchronous query to keep tile in sync
+        // 2. Fast asynchronous query to synchronize tile with real hardware state
         listeningJob = serviceScope.launch(Dispatchers.IO) {
             try {
                 val currentState = if (cachedBlockMode == "cam_mic") {
@@ -245,7 +280,9 @@ class SensorsOffTileService : TileService() {
                         if (currentState.isAuthoritative) {
                             updateTileState(currentState)
                         } else {
-                            refreshTileImmediately()
+                            // If authoritative state is UNKNOWN or temporarily unavailable,
+                            // maintain the tile in an interactive inactive state rather than disabling it
+                            updateTileState(SensorPrivacyState.UNKNOWN)
                         }
                     }
                 }
@@ -285,6 +322,10 @@ class SensorsOffTileService : TileService() {
     override fun onClick() {
         super.onClick()
         val clickTime = System.currentTimeMillis()
+
+        // Re-ensure dependencies and config upon click
+        ShizukuManager.initialize(applicationContext)
+        reloadVisualConfig()
 
         // 1. Abort any background listening query
         listeningJob?.cancel()
@@ -388,7 +429,7 @@ class SensorsOffTileService : TileService() {
         val targetState = when (state) {
             SensorPrivacyState.ENABLED -> Tile.STATE_ACTIVE
             SensorPrivacyState.DISABLED -> Tile.STATE_INACTIVE
-            SensorPrivacyState.UNKNOWN -> Tile.STATE_UNAVAILABLE
+            SensorPrivacyState.UNKNOWN -> Tile.STATE_INACTIVE
         }
         val targetIcon = when (state) {
             SensorPrivacyState.ENABLED -> cachedActiveIcon
@@ -398,7 +439,7 @@ class SensorsOffTileService : TileService() {
         val targetSubtitle = when (state) {
             SensorPrivacyState.ENABLED -> cachedActiveSubtitle
             SensorPrivacyState.DISABLED -> cachedDisabledSubtitle
-            SensorPrivacyState.UNKNOWN -> "Unavailable"
+            SensorPrivacyState.UNKNOWN -> "State Unknown"
         }
 
         if (tile.state == targetState &&
