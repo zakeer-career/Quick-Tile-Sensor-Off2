@@ -82,6 +82,20 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
   exclude { it.file.extension.equals("md", ignoreCase = true) || it.name.startsWith("README", ignoreCase = true) }
 }
 
+val copyCompanionApkTask = tasks.register<Copy>("copyCompanionApk") {
+  dependsOn(":tile:packageDebug")
+  from(project(":tile").layout.buildDirectory.dir("outputs/apk/debug"))
+  include("tile-debug.apk")
+  into(layout.projectDirectory.dir("src/main/assets"))
+  rename("tile-debug.apk", "tile-companion.apk")
+}
+tasks.matching { it.name.startsWith("generate") && it.name.endsWith("Assets") }.configureEach {
+  dependsOn(copyCompanionApkTask)
+}
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+  dependsOn(copyCompanionApkTask)
+}
+
 // Configure the Secrets Gradle Plugin to use .env and .env.example files
 // to match the convention used in Web projects.
 secrets {

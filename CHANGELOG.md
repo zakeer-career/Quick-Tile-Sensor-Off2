@@ -6,6 +6,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.8.8] - 2026-09-26
+
+### Bugfix Release: Quick Tile Companion APK Signing (v1/v2/v3/v4) & Automated Build Bundling
+
+#### Problem Analysis
+- **`INSTALL_PARSE_FAILED_NO_CERTIFICATES` on Companion Installation**:
+  - When users tapped "Install Companion" on Android devices (e.g., MIUI / HyperOS / AOSP), the system PackageInstaller rejected the APK with:
+    `Install Failure 4#-103 [INSTALL_PARSE_FAILED_NO_CERTIFICATES: Failed to collect certificates from /data/app/vmdl.../base.apk: Attempt to get length of null array]`
+  - Users were completely unable to install the standalone companion Quick Settings tile APK.
+
+#### Root Cause
+1. **Unsigned Companion APK Asset**:
+   - `tile-companion.apk` bundled in `app/src/main/assets` was not signed with release/debug certificate schemes (v1, v2, v3, v4).
+2. **Missing `signingConfig` in `:tile` Release Configuration**:
+   - `tile/build.gradle.kts` lacked an explicit `signingConfig` on its `release` buildType and lacked full `enableV1Signing`, `enableV2Signing`, `enableV3Signing`, and `enableV4Signing` directives in `signingConfigs.debugConfig`.
+3. **Manual Asset Syncing**:
+   - The asset copying step was previously manual, allowing stale or unsigned APKs to be packaged into the main application APK.
+
+#### Code Changes
+- `tile/build.gradle.kts`:
+  - Configured `signingConfigs.create("debugConfig")` with explicit `enableV1Signing = true`, `enableV2Signing = true`, `enableV3Signing = true`, and `enableV4Signing = true`.
+  - Assigned `signingConfig = signingConfigs.getByName("debugConfig")` to both `debug` and `release` build types.
+- `app/build.gradle.kts`:
+  - Added automated `copyCompanionApk` Gradle task linking `:tile:packageDebug` output directly to `app/src/main/assets/tile-companion.apk` on asset generation and merge tasks.
+- `app/src/main/assets/tile-companion.apk`:
+  - Rebuilt and replaced with properly signed APK containing valid certificate signatures (`CN=Android Debug, O=Android, C=US`).
+
+#### Telemetry & Verification
+- `keytool -printcert -jarfile app/src/main/assets/tile-companion.apk`: Verified valid certificate chain with SHA-256 (`AE:41:83:3B:...`) and SHA-384 signatures.
+- Build Status: All modules (:app, :tile, :core) compiled cleanly with 0 errors.
+
+---
+
 ## [2.8.7] - 2026-09-24
 
 ### Bugfix Release: Persistent Package-Private Companion Diagnostic Pipeline & Zero-Daemon IPC

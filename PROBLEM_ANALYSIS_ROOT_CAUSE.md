@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.8.8 - Quick Tile Companion APK Signing (v1/v2/v3/v4) & Automated Build Bundling](#v288---quick-tile-companion-apk-signing-v1v2v3v4--automated-build-bundling)
 - [v2.8.7 - Persistent Package-Private Companion Diagnostic Pipeline & Zero-Daemon IPC](#v287---persistent-package-private-companion-diagnostic-pipeline--zero-daemon-ipc)
 - [v2.8.6 - Dual-Source Telemetry System & Process-Isolated Companion Diagnostics](#v286---dual-source-telemetry-system--process-isolated-companion-diagnostics)
 - [v2.8.5 - Companion Quick Settings Tile State-Read Path & Dead Binder Recovery](#v285---companion-quick-settings-tile-state-read-path--dead-binder-recovery)
@@ -47,6 +48,35 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.8.8] - Quick Tile Companion APK Signing (v1/v2/v3/v4) & Automated Build Bundling
+
+#### Problem Analysis
+- **`INSTALL_PARSE_FAILED_NO_CERTIFICATES` Error During Companion Installation**:
+  - When users tapped the "Install Companion" button in the SensorsOff main app on Android devices (e.g. Xiaomi HyperOS/MIUI, AOSP), the system `PackageInstaller` dialog aborted the installation with the modal error:
+    `Missing certificates`
+    `Install Failure 4#-103 [INSTALL_PARSE_FAILED_NO_CERTIFICATES: Failed to collect certificates from /data/app/vmdl.../base.apk: Attempt to get length of null array]`
+  - The standalone companion Quick Settings tile APK failed to install on physical devices.
+
+#### Root Cause
+1. **Unsigned Companion APK Asset**:
+   - The `tile-companion.apk` file contained inside `app/src/main/assets` was missing signature blocks for standard APK signature schemes (v1 JAR signing, v2 APK signature scheme, v3, and v4).
+2. **Missing `signingConfig` in `:tile` Module Configuration**:
+   - In `tile/build.gradle.kts`, the `release` buildType omitted `signingConfig`, and `signingConfigs.create("debugConfig")` did not explicitly enable all signature schemes (`enableV1Signing`, `enableV2Signing`, `enableV3Signing`, `enableV4Signing`).
+3. **Absence of Build Pipeline Synchronization**:
+   - The companion APK asset bundling previously depended on manual artifact placement rather than a deterministic Gradle task dependency between `:tile:packageDebug` and `:app:generateDebugAssets` / `:app:mergeDebugAssets`.
+
+#### Engineered Resolution & Impact
+1. **Multi-Scheme Signing Configuration**:
+   - Updated `tile/build.gradle.kts` to enable v1, v2, v3, and v4 signing schemes in `debugConfig` and assigned `signingConfig = signingConfigs.getByName("debugConfig")` to both `debug` and `release` build types.
+2. **Automated Asset Synchronization**:
+   - Added `copyCompanionApk` Gradle task in `app/build.gradle.kts` configured to automatically build and copy `:tile`'s signed APK into `app/src/main/assets/tile-companion.apk` before asset compilation.
+3. **Signature Verification**:
+   - Verified that the resulting companion APK yields valid certificate chains with `CN=Android Debug, O=Android, C=US` and complete SHA-256 / SHA-384 fingerprints via `keytool -printcert`.
+4. **Zero-Daemon Architecture Preserved**:
+   - Zero background services, daemons, polling, or broadcast receivers introduced.
 
 ---
 

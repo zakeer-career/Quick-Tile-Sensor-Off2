@@ -22,6 +22,10 @@ android {
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+            enableV4Signing = true
         }
     }
 
@@ -32,6 +36,7 @@ android {
             isCrunchPngs = false
         }
         release {
+            signingConfig = signingConfigs.getByName("debugConfig")
             isCrunchPngs = false
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

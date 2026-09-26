@@ -11,6 +11,36 @@ Each commit entry includes:
 
 ---
 
+### [v2.8.8] - 2026-09-26
+
+```git
+fix(companion-installer): enable multi-scheme APK signing and automate asset bundling
+
+Problem:
+1. When tapping "Install Companion" on Android devices, Android PackageInstaller failed with:
+   INSTALL_PARSE_FAILED_NO_CERTIFICATES: Failed to collect certificates from /data/app/vmdl.../base.apk: Attempt to get length of null array.
+2. The bundled `tile-companion.apk` in `app/src/main/assets` was missing APK certificate signatures.
+
+Root Cause:
+1. `tile/build.gradle.kts` did not enable v1/v2/v3/v4 signing schemes explicitly and omitted `signingConfig` on the release buildType.
+2. Asset bundling between `:tile` and `:app` lacked an automated Gradle copy dependency, causing unsigned or stale artifacts to be packaged into assets.
+
+Changes:
+- tile/build.gradle.kts:
+  * Enabled `enableV1Signing = true`, `enableV2Signing = true`, `enableV3Signing = true`, and `enableV4Signing = true` in `signingConfigs.debugConfig`.
+  * Assigned `signingConfig = signingConfigs.getByName("debugConfig")` to both `debug` and `release` build types.
+- app/build.gradle.kts:
+  * Added `copyCompanionApk` Gradle task hooked to asset generation and merge tasks.
+- app/src/main/assets/tile-companion.apk:
+  * Replaced with fully signed companion APK verified via `keytool -printcert`.
+
+Verification:
+- `keytool -printcert -jarfile app/src/main/assets/tile-companion.apk`: Valid Android Debug certificate chain verified (SHA-256 / SHA-384).
+- `compile_applet`: All modules compiled and passed.
+```
+
+---
+
 ### [v2.8.7] - 2026-09-24
 
 ```git
