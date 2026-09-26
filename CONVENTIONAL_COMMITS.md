@@ -11,6 +11,42 @@ Each commit entry includes:
 
 ---
 
+### [v2.8.9] - 2026-09-26
+
+```git
+fix(tile): remove ACTIVE_TILE, bind on-demand from SystemUI, and enforce authoritative state evaluation
+
+Problem:
+1. Companion Quick Settings tile became stale, unresponsive, or failed to update after the main SensorsOff app was swiped away or closed.
+2. The companion tile relied on ACTIVE_TILE mode, requiring the main app process to call requestListeningState() to update the tile.
+3. onStartListening() performed multiple tile updates, first applying cached/stale values and then overwriting with async authoritative state.
+4. onClick() determined the toggle target state solely from qsTile.state, which could be stale after companion process death.
+
+Root Cause:
+1. ACTIVE_TILE metadata suppressed SystemUI's default behavior of binding the TileService and invoking onStartListening() when the notification shade opens.
+2. When com.SensorsOff was terminated, no requestListeningState() events were dispatched, leaving the companion tile in a dormant state.
+3. Decoupling was incomplete because the tile's refresh mechanism depended on main-app lifecycle events instead of pure SystemUI on-demand execution.
+
+Changes:
+- tile/src/main/AndroidManifest.xml:
+  * Removed android.service.quicksettings.ACTIVE_TILE metadata tag.
+  * Preserved android.service.quicksettings.TOGGLEABLE_TILE metadata.
+- tile/src/main/java/com/example/tile/SensorsOffTileService.kt:
+  * onStartListening(): Initialized Shizuku, loaded visual configuration, performed exactly ONE authoritative state read via ISensorPrivacyManager Binder, and updated tile once.
+  * onClick(): Queried live authoritative sensor privacy state directly before toggling; eliminated reliance on qsTile.state. Skipped toggle if state is UNKNOWN and preserved interactivity. Executed authoritative read-back verification before updating the tile UI.
+  * onDestroy(): Protected super.onDestroy() against Robolectric reflection hierarchy issues and cleaned up coroutine scopes and content observers.
+- tile/src/test/java/com/example/tile/SensorsOffTileCompanionTest.kt:
+  * Added test covering Process Death and Re-creation Sequence A through J.
+  * Added test verifying Companion Tile operation independently when main app process is completely dead.
+
+Verification:
+- gradle :tile:testDebugUnitTest :app:testDebugUnitTest: BUILD SUCCESSFUL (all 11 tile tests and all app tests passing).
+- compile_applet: Build succeeded.
+- gradle :tile:assembleDebug :app:assembleDebug: Both APKs compiled and verified.
+```
+
+---
+
 ### [v2.8.8] - 2026-09-26
 
 ```git

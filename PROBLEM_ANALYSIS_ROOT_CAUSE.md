@@ -6,6 +6,7 @@ This document serves as the canonical technical post-mortem and engineering anal
 
 ## Table of Contents
 
+- [v2.8.9 - Non-Active SystemUI Tile Binding, Authoritative State Verification & Process-Death Decoupling](#v289---non-active-systemui-tile-binding-authoritative-state-verification--process-death-decoupling)
 - [v2.8.8 - Quick Tile Companion APK Signing (v1/v2/v3/v4) & Automated Build Bundling](#v288---quick-tile-companion-apk-signing-v1v2v3v4--automated-build-bundling)
 - [v2.8.7 - Persistent Package-Private Companion Diagnostic Pipeline & Zero-Daemon IPC](#v287---persistent-package-private-companion-diagnostic-pipeline--zero-daemon-ipc)
 - [v2.8.6 - Dual-Source Telemetry System & Process-Isolated Companion Diagnostics](#v286---dual-source-telemetry-system--process-isolated-companion-diagnostics)
@@ -48,6 +49,40 @@ This document serves as the canonical technical post-mortem and engineering anal
 - [v2.1.1 - Experimental Raw AIDL Transact Failure and Premature Reversion](#v211---experimental-raw-aidl-transact-failure-and-premature-reversion)
 - [v2.1.0 - Subprocess Fork Latency and Synchronous SystemUI Rebinds](#v210---subprocess-fork-latency-and-synchronous-systemui-rebinds)
 - [v2.0.0 - Unprivileged Architecture Limitations and Lack of Telemetry](#v200---unprivileged-architecture-limitations-and-lack-of-telemetry)
+
+---
+
+### [v2.8.9] - Non-Active SystemUI Tile Binding, Authoritative State Verification & Process-Death Decoupling
+
+#### Problem Analysis
+- **Quick Tile Stale or Unresponsive After Main App Closure**:
+  - When users swiped away or terminated the main SensorsOff application (`com.SensorsOff`), the companion Quick Settings tile (`com.SensorsOff.tile`) eventually became stale, unresponsive, or failed to update its visual state.
+  - Users expected the Quick Settings tile to continue functioning indefinitely regardless of whether `com.SensorsOff` is running in memory or completely dead.
+  - Previous implementations marked the tile service with `android.service.quicksettings.ACTIVE_TILE = true`. Under Android OS specifications, an `ACTIVE_TILE` suppresses standard `onStartListening()` callbacks upon notification shade expansion and relies entirely on external calls to `TileService.requestListeningState()`.
+  - When `onStartListening()` was called, it executed multiple conflicting updates (an immediate update using cached/stale values followed by an asynchronous authoritative update).
+  - When `onClick()` was called, the requested target was determined solely from `qsTile.state`, which could be out of date if the companion process was destroyed by the system.
+
+#### Root Cause
+1. **`ACTIVE_TILE` Suppressing SystemUI Shade-Open Binds**:
+   - Declaring `ACTIVE_TILE = true` instructs SystemUI not to bind the service when the user expands the notification shade. Instead, the service only receives callbacks if an external process or daemon triggers `TileService.requestListeningState()`. When `com.SensorsOff` is terminated, no events occur, leaving the tile stale.
+2. **Main-App Lifecycle Coupling**:
+   - The tile depended on the main app's process being active to receive updates.
+3. **Determining Target State from Stale UI State**:
+   - Inferring the target state from `qsTile.state` during `onClick()` led to invalid toggles when SystemUI retained stale visual properties after process death.
+4. **Cached Binder Invalidity**:
+   - Across process death, stale Binder proxies cached in memory must be cleared and reacquired without relying on dead references or static variables.
+
+#### Engineered Resolution & Impact
+1. **Removal of `ACTIVE_TILE` Mode**:
+   - Removed `android.service.quicksettings.ACTIVE_TILE` from `tile/src/main/AndroidManifest.xml` while retaining `TOGGLEABLE_TILE = true`. This restores standard SystemUI on-demand lifecycle behavior: SystemUI binds `SensorsOffTileService` and invokes `onStartListening()` each time the user expands the notification shade.
+2. **Clean Single Authoritative State Read in `onStartListening()`**:
+   - Replaced multi-update listening flow with a single authoritative query directly to `ISensorPrivacyManager`. The tile is updated exactly once per listening session with the true hardware state.
+3. **Direct Hardware Query in `onClick()`**:
+   - Eliminated reliance on `qsTile.state`. On tap, the service immediately queries the authoritative sensor privacy state via Binder. If the state is `UNKNOWN`, the toggle is skipped and logged, keeping the tile interactive. If authoritative, the toggle is performed, verified via read-back, and applied to the tile.
+4. **Complete Zero-Daemon Process-Death Decoupling**:
+   - The companion operates 100% independently of `com.SensorsOff`. Verified via Robolectric tests simulating complete process teardown, Shizuku reacquisition, and Binder reconnection.
+5. **Zero Background Overhead**:
+   - Strictly zero foreground services, zero background daemons, zero polling loops, zero wake locks, and zero boot receivers.
 
 ---
 

@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.8.9] - 2026-09-26
+
+### Architecture & Resilience Release: Non-Active SystemUI Tile Binding, Authoritative State Verification & Process-Death Decoupling
+
+#### Problem Analysis
+- **Tile Becomes Stale or Unresponsive When Main App is Closed**:
+  - When the user closed or swiped away `com.SensorsOff`, after some time the companion Quick Settings tile stopped responding or presented stale state in SystemUI.
+  - Previous `ACTIVE_TILE` metadata instructed SystemUI not to bind the service when the notification shade opened, relying instead on explicit `requestListeningState()` signals from a living main app process.
+  - In `onStartListening()`, the tile previously performed an immediate visual update using cached/stale values followed by an asynchronous authoritative update, causing multiple conflicting `updateTile()` calls.
+  - In `onClick()`, the toggle direction was previously inferred from `qsTile.state`, which could be stale after companion process death.
+
+#### Root Cause
+1. **`ACTIVE_TILE` Suppressing SystemUI Shade-Open Binds**:
+   - Marking the tile service as `ACTIVE_TILE = true` forced SystemUI to treat the tile as self-managed, suppressing normal `onStartListening()` callbacks upon shade expansion and requiring active calls to `requestListeningState()`.
+2. **Main-App Lifecycle Dependency**:
+   - The tile relied on main app lifecycle triggers to refresh its UI state rather than being bound on-demand directly by SystemUI when the user pulls down the shade.
+3. **Stale UI State Reliance on Click**:
+   - Determining the target toggle state strictly from `qsTile.state` instead of hardware/Binder source-of-truth led to incorrect toggles if SystemUI held stale visual state.
+4. **Dead Binder Reacquisition**:
+   - After companion process death or unbind, cached Binder references required clean, synchronous revalidation and reacquisition without assuming persistent static state.
+
+#### Code Changes
+- `tile/src/main/AndroidManifest.xml`:
+  - Removed `android.service.quicksettings.ACTIVE_TILE` metadata to restore standard SystemUI on-demand shade binding.
+  - Retained `android.service.quicksettings.TOGGLEABLE_TILE = true`.
+- `tile/src/main/java/com/example/tile/SensorsOffTileService.kt`:
+  - `onStartListening()`: Re-implemented to initialize Shizuku, reload visual configuration, execute ONE authoritative state read directly from `ISensorPrivacyManager`, and dispatch a single `updateTile()` call.
+  - `onClick()`: Re-implemented to read authoritative hardware state directly before toggling; strictly toggles based on live sensor privacy state rather than `qsTile.state`. If state is `UNKNOWN`, skips toggle, logs diagnostic reason, and maintains tile interactivity. Performs authoritative read-back verification before updating the tile.
+  - `onDestroy()`: Wrapped `super.onDestroy()` in exception handling to safely clean up coroutine scopes and content observers across process termination.
+- `tile/src/test/java/com/example/tile/SensorsOffTileCompanionTest.kt`:
+  - Added test `test Process Death and Re-creation Sequence A through J` covering full process teardown, Shizuku reacquisition, sensor privacy Binder reacquisition, and authoritative state validation.
+  - Added test `test Companion Tile operates independently when main app process is dead` validating 100% decoupling from `com.SensorsOff`.
+
+#### Telemetry & Verification
+- Unit & Robolectric Tests: All 11 tests in `:tile:testDebugUnitTest` and all tests in `:app:testDebugUnitTest` passed with 0 errors.
+- Persistent `TilePluginLog` Telemetry: Maintained full event logging (`COMPANION_PROCESS_CREATED`, `TILE_SERVICE_ON_CREATE`, `TILE_SERVICE_ON_START_LISTENING`, `TILE_SERVICE_ON_CLICK`, `TILE_SERVICE_ON_STOP_LISTENING`, `TILE_SERVICE_ON_DESTROY`, `authoritative_state_read`, `sensor_privacy_binder`, `shizuku_check`, `toggle`, `state_unknown`, `tile_update`).
+- System Architecture: Zero foreground services, zero background daemons, zero polling, zero wake locks, zero boot receivers, zero keep-alives.
+
+---
+
 ## [2.8.8] - 2026-09-26
 
 ### Bugfix Release: Quick Tile Companion APK Signing (v1/v2/v3/v4) & Automated Build Bundling
