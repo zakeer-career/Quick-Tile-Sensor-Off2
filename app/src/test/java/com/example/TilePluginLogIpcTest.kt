@@ -165,7 +165,7 @@ class TilePluginLogIpcTest {
             override fun query(uri: Uri, p: Array<out String>?, s: String?, sa: Array<out String>?, so: String?): Cursor {
                 val cursor = MatrixCursor(arrayOf("id", "timestamp", "time", "event", "pid", "thread", "session", "fields"))
                 val fieldsJson = JSONObject(mapOf("testKey" to "testVal")).toString()
-                cursor.addRow(arrayOf(101L, 1000L, "12:00:00.000", "TEST_LOG_WRITE", 1234, "main", "ABCDEF", fieldsJson))
+                cursor.addRow(arrayOf<Any?>(101L, 1000L, "12:00:00.000", "TEST_LOG_WRITE", 1234, "main", "ABCDEF", fieldsJson))
                 return cursor
             }
             override fun getType(uri: Uri): String = "vnd.android.cursor.dir/vnd.sensorsoff.tile.log"
@@ -261,7 +261,7 @@ class TilePluginLogIpcTest {
                 val cursor = MatrixCursor(arrayOf("id", "timestamp", "time", "event", "pid", "thread", "session", "fields"))
                 for (entry in entries) {
                     val fieldsJson = JSONObject(entry.fields as Map<*, *>).toString()
-                    cursor.addRow(arrayOf(entry.id, entry.timestamp, entry.formattedTime, entry.event, entry.pid, entry.thread, entry.session, fieldsJson))
+                    cursor.addRow(arrayOf<Any?>(entry.id, entry.timestamp, entry.formattedTime, entry.event, entry.pid, entry.thread, entry.session, fieldsJson))
                 }
                 return cursor
             }
