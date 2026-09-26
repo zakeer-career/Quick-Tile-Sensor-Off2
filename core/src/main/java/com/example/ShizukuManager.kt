@@ -186,7 +186,10 @@ object ShizukuManager {
         }
     }
 
+    @Volatile var lastPermissionResult: Int? = null
+
     private val permissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+        lastPermissionResult = grantResult
         if (grantResult == PackageManager.PERMISSION_GRANTED) {
             Log.i(TAG, "Shizuku permission granted. Notifying tile and services.")
             appContextRef?.get()?.let { ctx ->
@@ -198,6 +201,65 @@ object ShizukuManager {
                     LogLevel.SUCCESS
                 )
             }
+        } else {
+            Log.w(TAG, "Shizuku permission denied by user (code=$grantResult).")
+            appContextRef?.get()?.let { ctx ->
+                TileLogManager.logPrivilegeEvent(
+                    ctx,
+                    "Shizuku Denied",
+                    "User denied Shizuku permission request.",
+                    LogLevel.WARN
+                )
+            }
+        }
+    }
+
+    enum class ShizukuStatus(val displayName: String) {
+        NOT_INSTALLED("Not Installed"),
+        NOT_RUNNING("Not Running"),
+        RUNNING_PERMISSION_MISSING("Running / Permission Missing"),
+        RUNNING_PERMISSION_GRANTED("Running / Permission Granted"),
+        PERMISSION_DENIED("Permission Denied"),
+        BINDER_UNAVAILABLE("Binder Unavailable")
+    }
+
+    /**
+     * Authoritative check for Shizuku installation, server running status, and package authorization.
+     */
+    fun getDetailedShizukuStatus(context: Context): ShizukuStatus {
+        if (!isShizukuInstalled(context)) return ShizukuStatus.NOT_INSTALLED
+        if (!isShizukuRunning()) return ShizukuStatus.NOT_RUNNING
+        return try {
+            val perm = Shizuku.checkSelfPermission()
+            if (perm == PackageManager.PERMISSION_GRANTED) {
+                ShizukuStatus.RUNNING_PERMISSION_GRANTED
+            } else if (lastPermissionResult == PackageManager.PERMISSION_DENIED) {
+                ShizukuStatus.PERMISSION_DENIED
+            } else {
+                ShizukuStatus.RUNNING_PERMISSION_MISSING
+            }
+        } catch (e: SecurityException) {
+            ShizukuStatus.BINDER_UNAVAILABLE
+        } catch (e: Exception) {
+            ShizukuStatus.BINDER_UNAVAILABLE
+        }
+    }
+
+    /**
+     * Executes official Shizuku permission request using standard Shizuku.requestPermission().
+     */
+    fun requestShizukuPermissionOfficial(): Boolean {
+        if (!isShizukuRunning()) return false
+        return try {
+            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                Shizuku.requestPermission(SHIZUKU_REQ_CODE)
+                true
+            } else {
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Official Shizuku permission request error: ${e.message}", e)
+            false
         }
     }
 

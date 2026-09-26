@@ -2,6 +2,7 @@ package com.example.tile
 
 import android.content.ContentProvider
 import android.content.ContentValues
+import android.content.pm.PackageManager
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
@@ -12,16 +13,18 @@ import com.example.TilePluginLog
 import org.json.JSONObject
 
 /**
- * Lightweight ContentProvider in the Quick Tile Companion APK (:tile).
+ * Cryptographically Protected ContentProvider in the Quick Tile Companion APK (:tile).
  * Application ID: com.SensorsOff.tile
  * Authority: com.SensorsOff.tile.logprovider
  *
- * Reads persistent log file ("tile_plugin.log") directly on-demand.
- * Restricted to caller verification (calling UID matching same user / SensorsOff package).
+ * Reads persistent log files ("tile_plugin.log", ".1", ".2") directly on-demand.
+ * Restricted strictly to caller verification:
+ * - Calling UID matching same package/UID OR
+ * - Calling package "com.SensorsOff" verified via signature match.
  *
  * Characteristics:
- * - Direct read of persistent package-local log file
- * - Zero background threads or services
+ * - Direct synchronous read of persistent package-local log files
+ * - Zero background threads, services, or daemons
  * - Safe on-demand serving
  * - Test Log insertion trigger for verifying IPC pipeline
  */
@@ -44,22 +47,30 @@ class TilePluginLogProvider : ContentProvider() {
             return true
         }
 
-        // Verify package associated with calling UID
+        // Verify package and signature associated with calling UID
         try {
             val pm = ctx.packageManager
             val packages = pm.getPackagesForUid(callingUid)
             if (packages != null) {
                 for (pkg in packages) {
-                    if (pkg == TilePluginLog.MAIN_APP_PACKAGE || pkg == TilePluginLog.COMPANION_PACKAGE) {
+                    if (pkg == TilePluginLog.MAIN_APP_PACKAGE) {
+                        // Cryptographic signature verification: ensure caller has matching signature
+                        val sigMatch = pm.checkSignatures(Process.myUid(), callingUid)
+                        if (sigMatch == PackageManager.SIGNATURE_MATCH) {
+                            return true
+                        } else {
+                            Log.w(TAG, "Caller package $pkg signature mismatch: $sigMatch")
+                        }
+                    } else if (pkg == TilePluginLog.COMPANION_PACKAGE) {
                         return true
                     }
                 }
             }
         } catch (e: Exception) {
-            Log.w("TilePluginLogProvider", "Caller UID verification error: ${e.message}")
+            Log.w(TAG, "Caller UID verification error: ${e.message}")
         }
 
-        // Reject all other callers
+        // Reject all unauthorized callers
         return false
     }
 
@@ -72,10 +83,10 @@ class TilePluginLogProvider : ContentProvider() {
     ): Cursor {
         val ctx = context ?: return MatrixCursor(COLUMNS)
         if (!checkCallingPermission()) {
-            throw SecurityException("Unauthorized access to companion log provider")
+            throw SecurityException("Unauthorized access to companion log provider from UID ${Binder.getCallingUid()}")
         }
 
-        // Read directly from the persistent package-private file
+        // Read directly from the persistent package-private files
         val entries = TilePluginLog.readPersistentLogEntries(ctx)
 
         val cursor = MatrixCursor(COLUMNS)
@@ -107,7 +118,7 @@ class TilePluginLogProvider : ContentProvider() {
     override fun insert(uri: Uri, values: ContentValues?): Uri? {
         val ctx = context ?: return null
         if (!checkCallingPermission()) {
-            throw SecurityException("Unauthorized access to companion log provider")
+            throw SecurityException("Unauthorized access to companion log provider from UID ${Binder.getCallingUid()}")
         }
 
         // Diagnostic action: Write Test Log
@@ -118,7 +129,7 @@ class TilePluginLogProvider : ContentProvider() {
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?): Int {
         val ctx = context ?: return 0
         if (!checkCallingPermission()) {
-            throw SecurityException("Unauthorized access to companion log provider")
+            throw SecurityException("Unauthorized access to companion log provider from UID ${Binder.getCallingUid()}")
         }
 
         TilePluginLog.clear(ctx)
@@ -128,6 +139,7 @@ class TilePluginLogProvider : ContentProvider() {
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = 0
 
     companion object {
+        private const val TAG = "TilePluginLogProvider"
         private val COLUMNS = arrayOf(
             "id",
             "timestamp",

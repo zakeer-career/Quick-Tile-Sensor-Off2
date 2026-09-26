@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
 import android.net.Uri
@@ -10,11 +11,10 @@ import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.io.RandomAccessFile
+import java.io.OutputStreamWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -27,15 +27,10 @@ import java.util.concurrent.atomic.AtomicLong
  * Distinct Prefix: [TILE_PLUGIN]
  * Features:
  * - Direct, synchronous append to a persistent package-private file ("tile_plugin.log")
- * - Bounded log retention with automatic size rotation (survives TileService destruction)
- * - Complete companion TileService lifecycle tracing:
- *     - COMPANION_PROCESS_CREATED
- *     - TILE_SERVICE_ON_CREATE
- *     - TILE_SERVICE_ON_START_LISTENING
- *     - TILE_SERVICE_ON_CLICK
- *     - TILE_SERVICE_ON_STOP_LISTENING
- *     - TILE_SERVICE_ON_DESTROY
- *     - TEST_LOG_WRITE
+ * - Bounded log retention with automatic multi-file rotation (tile_plugin.log, .1, .2 up to ~768 KB)
+ * - Safe rotation without losing newest events
+ * - Complete companion TileService lifecycle tracing with unique click operationId
+ * - Pre-operation durability: logs operation start BEFORE dispatching Binder transactions
  * - Safe on-demand IPC via TilePluginLogProvider for com.SensorsOff
  * - Zero background daemons, zero polling, zero wake locks, zero persistent services
  */
@@ -49,7 +44,12 @@ object TilePluginLog {
     val TEST_LOG_URI: Uri = Uri.parse("content://$LOG_PROVIDER_AUTHORITY/test_log")
 
     const val LOG_FILE_NAME = "tile_plugin.log"
-    private const val MAX_LOG_FILE_BYTES = 256 * 1024L // 256 KB max
+    const val LOG_FILE_NAME_1 = "tile_plugin.log.1"
+    const val LOG_FILE_NAME_2 = "tile_plugin.log.2"
+    private const val SESSION_STATE_FILE = "companion_session.json"
+
+    // Max 256 KB per file (max 3 files = 768 KB bounded storage)
+    private const val MAX_LOG_FILE_BYTES = 256 * 1024L
     private const val MAX_IN_MEMORY_ENTRIES = 200
 
     private val idCounter = AtomicLong(System.currentTimeMillis())
@@ -73,7 +73,8 @@ object TilePluginLog {
         val thread: String,
         val session: String,
         val fields: Map<String, String>,
-        val rawMessage: String
+        val rawMessage: String,
+        val opId: String? = fields["op"]
     ) {
         fun toFormattedBlock(): String {
             val isoTime = try {
@@ -86,11 +87,17 @@ object TilePluginLog {
                 appendLine("[TILE_PLUGIN]")
                 appendLine("session=$session")
                 appendLine("pid=$pid")
+                appendLine("package=$COMPANION_PACKAGE")
                 appendLine("event=$event")
                 appendLine("thread=$thread")
                 appendLine("time=$formattedTime")
+                if (opId != null) {
+                    appendLine("op=$opId")
+                }
                 for ((k, v) in fields) {
-                    appendLine("$k=$v")
+                    if (k != "op") {
+                        appendLine("$k=$v")
+                    }
                 }
             }.trimEnd()
         }
@@ -107,8 +114,12 @@ object TilePluginLog {
             json.put("time", formattedTime)
             json.put("event", event)
             json.put("pid", pid)
+            json.put("pkg", COMPANION_PACKAGE)
             json.put("thread", thread)
             json.put("session", session)
+            if (opId != null) {
+                json.put("op", opId)
+            }
             val fieldsJson = JSONObject()
             for ((k, v) in fields) {
                 fieldsJson.put(k, v)
@@ -128,6 +139,7 @@ object TilePluginLog {
                     val p = obj.optInt("pid", 0)
                     val thread = obj.optString("thread", "main")
                     val session = obj.optString("session", "")
+                    val op = if (obj.has("op")) obj.optString("op") else null
                     val fieldsObj = obj.optJSONObject("fields")
                     val fieldsMap = mutableMapOf<String, String>()
                     if (fieldsObj != null) {
@@ -136,6 +148,9 @@ object TilePluginLog {
                             val k = keys.next()
                             fieldsMap[k] = fieldsObj.getString(k)
                         }
+                    }
+                    if (op != null && !fieldsMap.containsKey("op")) {
+                        fieldsMap["op"] = op
                     }
                     Entry(
                         id = id,
@@ -146,7 +161,8 @@ object TilePluginLog {
                         thread = thread,
                         session = session,
                         fields = fieldsMap,
-                        rawMessage = ""
+                        rawMessage = "",
+                        opId = op ?: fieldsMap["op"]
                     )
                 } catch (e: Exception) {
                     null
@@ -161,9 +177,10 @@ object TilePluginLog {
     private val fileLock = Any()
     @Volatile private var isInitialized = false
 
-    fun getLogFile(context: Context): File {
-        return File(context.filesDir, LOG_FILE_NAME)
-    }
+    fun getLogFile(context: Context): File = File(context.filesDir, LOG_FILE_NAME)
+    private fun getLogFile1(context: Context): File = File(context.filesDir, LOG_FILE_NAME_1)
+    private fun getLogFile2(context: Context): File = File(context.filesDir, LOG_FILE_NAME_2)
+    private fun getSessionStateFile(context: Context): File = File(context.filesDir, SESSION_STATE_FILE)
 
     fun initialize(context: Context) {
         if (isInitialized) return
@@ -174,47 +191,62 @@ object TilePluginLog {
         }
     }
 
+    /**
+     * Reads all persistent log files (primary + rotated backups) in bounded order.
+     */
     private fun loadEntriesFromFile(context: Context): List<Entry> {
-        val file = getLogFile(context)
-        if (!file.exists()) {
-            _logsFlow.value = emptyList()
-            return emptyList()
-        }
+        val files = listOf(getLogFile(context), getLogFile1(context), getLogFile2(context))
+        val allEntries = mutableListOf<Entry>()
 
-        val entries = mutableListOf<Entry>()
-        try {
-            file.bufferedReader().useLines { lines ->
-                for (line in lines) {
-                    val trimmed = line.trim()
-                    if (trimmed.isNotEmpty()) {
-                        val entry = Entry.fromJsonString(trimmed)
-                        if (entry != null) {
-                            entries.add(entry)
+        for (file in files) {
+            if (!file.exists()) continue
+            try {
+                file.bufferedReader().useLines { lines ->
+                    for (line in lines) {
+                        val trimmed = line.trim()
+                        if (trimmed.isNotEmpty()) {
+                            val entry = Entry.fromJsonString(trimmed)
+                            if (entry != null) {
+                                allEntries.add(entry)
+                            }
                         }
                     }
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed reading log file ${file.name}: ${e.message}")
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "Failed reading log file: ${e.message}")
         }
 
-        val reversed = entries.reversed().take(MAX_IN_MEMORY_ENTRIES)
-        _logsFlow.value = reversed
-        return reversed
+        // Sort reverse chronological (newest first)
+        val sorted = allEntries.sortedByDescending { it.timestamp }.take(MAX_IN_MEMORY_ENTRIES)
+        _logsFlow.value = sorted
+        return sorted
     }
 
     /**
      * Appends an entry directly and synchronously to context.filesDir / "tile_plugin.log"
+     * Follows strict synchronous append semantics:
+     * 1. Open file in append mode
+     * 2. Write complete event JSON line
+     * 3. flush()
+     * 4. close()
      */
     @Synchronized
     fun logEvent(
         context: Context,
         event: String,
-        fields: Map<String, String> = emptyMap()
+        fields: Map<String, String> = emptyMap(),
+        opId: String? = fields["op"]
     ) {
         val now = System.currentTimeMillis()
         val formatted = timeFormat.get()?.format(Date(now)) ?: ""
         val threadName = Thread.currentThread().name
+
+        val mergedFields = if (opId != null && !fields.containsKey("op")) {
+            fields + ("op" to opId)
+        } else {
+            fields
+        }
 
         val entry = Entry(
             id = idCounter.incrementAndGet(),
@@ -224,14 +256,15 @@ object TilePluginLog {
             pid = pid,
             thread = threadName,
             session = sessionId,
-            fields = fields,
-            rawMessage = ""
+            fields = mergedFields,
+            rawMessage = "",
+            opId = opId ?: mergedFields["op"]
         )
 
         val block = entry.toFormattedBlock()
         Log.i(TAG, "\n$block")
 
-        // 1. Synchronously append to persistent file
+        // Synchronous append with strict flush & close
         synchronized(fileLock) {
             try {
                 val file = getLogFile(context)
@@ -241,37 +274,165 @@ object TilePluginLog {
                 }
 
                 // Check size rotation
-                if (file.exists() && file.length() > MAX_LOG_FILE_BYTES) {
-                    rotateLogFile(file)
+                if (file.exists() && file.length() >= MAX_LOG_FILE_BYTES) {
+                    performSafeRotation(context)
                 }
 
-                FileOutputStream(file, true).bufferedWriter().use { writer ->
+                val fos = FileOutputStream(file, true)
+                val writer = OutputStreamWriter(fos, Charsets.UTF_8).buffered()
+                try {
                     writer.write(entry.toJsonString())
                     writer.newLine()
                     writer.flush()
+                } finally {
+                    try { writer.close() } catch (ignored: Exception) {}
+                    try { fos.close() } catch (ignored: Exception) {}
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error writing to persistent companion log file: ${e.message}", e)
             }
         }
 
-        // 2. Update memory state flow
+        // Update memory state flow
         val updated = (listOf(entry) + _logsFlow.value).take(MAX_IN_MEMORY_ENTRIES)
         _logsFlow.value = updated
     }
 
-    private fun rotateLogFile(file: File) {
+    /**
+     * Bounded log rotation:
+     * tile_plugin.log.1 -> tile_plugin.log.2
+     * tile_plugin.log -> tile_plugin.log.1
+     * Creates new empty tile_plugin.log
+     */
+    private fun performSafeRotation(context: Context) {
         try {
-            val lines = file.readLines()
-            val keep = lines.takeLast(lines.size / 2)
-            file.bufferedWriter().use { writer ->
-                for (l in keep) {
-                    writer.write(l)
-                    writer.newLine()
-                }
+            val f0 = getLogFile(context)
+            val f1 = getLogFile1(context)
+            val f2 = getLogFile2(context)
+
+            if (f2.exists()) {
+                f2.delete()
+            }
+            if (f1.exists()) {
+                f1.renameTo(f2)
+            }
+            if (f0.exists()) {
+                f0.renameTo(f1)
+            }
+
+            // Write rotation diagnostic event to the fresh log
+            val now = System.currentTimeMillis()
+            val formatted = timeFormat.get()?.format(Date(now)) ?: ""
+            val rotEntry = Entry(
+                id = idCounter.incrementAndGet(),
+                timestamp = now,
+                formattedTime = formatted,
+                event = "LOG_ROTATION",
+                pid = pid,
+                thread = Thread.currentThread().name,
+                session = sessionId,
+                fields = mapOf(
+                    "reason" to "FILE_SIZE_LIMIT_EXCEEDED",
+                    "maxFileBytes" to MAX_LOG_FILE_BYTES.toString(),
+                    "rotatedTo" to LOG_FILE_NAME_1
+                ),
+                rawMessage = ""
+            )
+
+            val fos = FileOutputStream(f0, true)
+            val writer = OutputStreamWriter(fos, Charsets.UTF_8).buffered()
+            try {
+                writer.write(rotEntry.toJsonString())
+                writer.newLine()
+                writer.flush()
+            } finally {
+                try { writer.close() } catch (ignored: Exception) {}
+                try { fos.close() } catch (ignored: Exception) {}
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Log rotation note: ${e.message}")
+            Log.w(TAG, "Safe log rotation note: ${e.message}")
+        }
+    }
+
+    // ==========================================
+    // OEM KILL / PROCESS RESTART DETECTION
+    // ==========================================
+
+    /**
+     * Called strictly from SensorsOffTileApp.onCreate() in companion process.
+     * Generates a new session ID and checks if previous session had an unexpected termination.
+     */
+    fun onCompanionProcessCreated(context: Context, source: String = "SensorsOffTileApp.onCreate") {
+        initialize(context)
+
+        // Check previous session state
+        val stateFile = getSessionStateFile(context)
+        var previousSessionEndedUnexpectedly = false
+        var previousSessionId = ""
+        var previousPid = 0
+
+        synchronized(fileLock) {
+            try {
+                if (stateFile.exists()) {
+                    val content = stateFile.readText().trim()
+                    if (content.isNotEmpty()) {
+                        val json = JSONObject(content)
+                        val cleanShutdown = json.optBoolean("cleanShutdown", false)
+                        previousSessionId = json.optString("sessionId", "")
+                        previousPid = json.optInt("pid", 0)
+
+                        if (!cleanShutdown && previousSessionId.isNotEmpty() && previousSessionId != sessionId) {
+                            previousSessionEndedUnexpectedly = true
+                        }
+                    }
+                }
+
+                // Record current session state as active (cleanShutdown = false until onDestroy)
+                val currentJson = JSONObject().apply {
+                    put("sessionId", sessionId)
+                    put("pid", pid)
+                    put("startTime", System.currentTimeMillis())
+                    put("cleanShutdown", false)
+                }
+                stateFile.writeText(currentJson.toString())
+            } catch (e: Exception) {
+                Log.d(TAG, "Session state tracking note: ${e.message}")
+            }
+        }
+
+        if (previousSessionEndedUnexpectedly) {
+            logEvent(
+                context = context,
+                event = "PROCESS_RECREATED",
+                fields = mapOf(
+                    "term" to "PROCESS_RECREATED",
+                    "previousSession" to previousSessionId,
+                    "previousPid" to previousPid.toString(),
+                    "reason" to "PREVIOUS_SESSION_TERMINATED_WITHOUT_CLEAN_SHUTDOWN"
+                )
+            )
+        }
+
+        logCompanionProcessCreated(context, source)
+    }
+
+    /**
+     * Records clean shutdown when TileService.onDestroy() completes.
+     */
+    fun markCleanShutdown(context: Context) {
+        synchronized(fileLock) {
+            try {
+                val stateFile = getSessionStateFile(context)
+                val currentJson = JSONObject().apply {
+                    put("sessionId", sessionId)
+                    put("pid", pid)
+                    put("cleanShutdown", true)
+                    put("shutdownTime", System.currentTimeMillis())
+                }
+                stateFile.writeText(currentJson.toString())
+            } catch (e: Exception) {
+                Log.d(TAG, "Mark clean shutdown note: ${e.message}")
+            }
         }
     }
 
@@ -328,14 +489,19 @@ object TilePluginLog {
         )
     }
 
-    fun logTileServiceOnClick(context: Context) {
+    fun logTileServiceOnClick(context: Context, opId: String? = null) {
+        val fields = mutableMapOf(
+            "class" to "SensorsOffTileService",
+            "action" to "USER_TAP"
+        )
+        if (opId != null) {
+            fields["op"] = opId
+        }
         logEvent(
             context = context,
             event = "TILE_SERVICE_ON_CLICK",
-            fields = mapOf(
-                "class" to "SensorsOffTileService",
-                "action" to "USER_TAP"
-            )
+            fields = fields,
+            opId = opId
         )
     }
 
@@ -350,6 +516,7 @@ object TilePluginLog {
     }
 
     fun logTileServiceOnDestroy(context: Context) {
+        markCleanShutdown(context)
         logEvent(
             context = context,
             event = "TILE_SERVICE_ON_DESTROY",
@@ -359,22 +526,30 @@ object TilePluginLog {
         )
     }
 
-    fun logLifecycle(context: Context, eventName: String, extraDetail: String = "") {
+    fun logLifecycle(context: Context, eventName: String, extraDetail: String = "", opId: String? = null) {
         val fields = mutableMapOf<String, String>()
         if (extraDetail.isNotBlank()) {
             fields["detail"] = extraDetail
         }
-        logEvent(context, eventName, fields)
+        if (opId != null) {
+            fields["op"] = opId
+        }
+        logEvent(context, eventName, fields, opId = opId)
     }
 
-    fun logTileClick(context: Context, currentState: String, requestedState: String) {
+    fun logTileClick(context: Context, currentState: String, requestedState: String, opId: String? = null) {
+        val fields = mutableMapOf(
+            "currentState" to currentState,
+            "requestedState" to requestedState
+        )
+        if (opId != null) {
+            fields["op"] = opId
+        }
         logEvent(
             context,
             "tile_click",
-            mapOf(
-                "currentState" to currentState,
-                "requestedState" to requestedState
-            )
+            fields,
+            opId = opId
         )
     }
 
@@ -405,19 +580,23 @@ object TilePluginLog {
         binderAlive: Boolean,
         permissionGranted: Boolean,
         permissionCheckResult: Int,
-        binderStatus: String
+        binderStatus: String,
+        opId: String? = null
     ) {
+        val fields = mutableMapOf(
+            "package" to COMPANION_PACKAGE,
+            "running" to running.toString(),
+            "binderAlive" to binderAlive.toString(),
+            "permission" to if (permissionGranted) "GRANTED" else "DENIED",
+            "permissionCheckResult" to permissionCheckResult.toString(),
+            "binderStatus" to binderStatus
+        )
+        if (opId != null) fields["op"] = opId
         logEvent(
             context,
             "shizuku_check",
-            mapOf(
-                "package" to COMPANION_PACKAGE,
-                "running" to running.toString(),
-                "binderAlive" to binderAlive.toString(),
-                "permission" to if (permissionGranted) "GRANTED" else "DENIED",
-                "permissionCheckResult" to permissionCheckResult.toString(),
-                "binderStatus" to binderStatus
-            )
+            fields,
+            opId = opId
         )
     }
 
@@ -429,20 +608,24 @@ object TilePluginLog {
         reacquired: Boolean = false,
         api: Int = Build.VERSION.SDK_INT,
         readTx: Int? = SensorPrivacyCodes.getQueryGlobalCodeForSdk(api),
-        setTx: Int? = SensorPrivacyCodes.getSetGlobalCodeForSdk(api)
+        setTx: Int? = SensorPrivacyCodes.getSetGlobalCodeForSdk(api),
+        opId: String? = null
     ) {
+        val fields = mutableMapOf(
+            "result" to result,
+            "binderAlive" to binderAlive.toString(),
+            "invalidated" to invalidated.toString(),
+            "reacquired" to reacquired.toString(),
+            "api" to api.toString(),
+            "readTransaction" to (readTx?.toString() ?: "UNSUPPORTED"),
+            "setTransaction" to (setTx?.toString() ?: "UNSUPPORTED")
+        )
+        if (opId != null) fields["op"] = opId
         logEvent(
             context,
             "sensor_privacy_binder",
-            mapOf(
-                "result" to result,
-                "binderAlive" to binderAlive.toString(),
-                "invalidated" to invalidated.toString(),
-                "reacquired" to reacquired.toString(),
-                "api" to api.toString(),
-                "readTransaction" to (readTx?.toString() ?: "UNSUPPORTED"),
-                "setTransaction" to (setTx?.toString() ?: "UNSUPPORTED")
-            )
+            fields,
+            opId = opId
         )
     }
 
@@ -457,7 +640,8 @@ object TilePluginLog {
         rawResult: String? = null,
         parsedState: String? = null,
         finalState: String,
-        reason: String? = null
+        reason: String? = null,
+        opId: String? = null
     ) {
         val fields = mutableMapOf(
             "attempt" to attempt.toString(),
@@ -471,8 +655,9 @@ object TilePluginLog {
         if (rawResult != null) fields["rawResult"] = rawResult
         if (parsedState != null) fields["parsedState"] = parsedState
         if (reason != null) fields["reason"] = reason
+        if (opId != null) fields["op"] = opId
 
-        logEvent(context, "authoritative_state_read", fields)
+        logEvent(context, "authoritative_state_read", fields, opId = opId)
     }
 
     fun logToggle(
@@ -485,7 +670,8 @@ object TilePluginLog {
         setResult: String,
         verification: String,
         finalState: String,
-        reason: String? = null
+        reason: String? = null,
+        opId: String? = null
     ) {
         val fields = mutableMapOf(
             "currentState" to currentState,
@@ -498,17 +684,20 @@ object TilePluginLog {
             "finalState" to finalState
         )
         if (reason != null) fields["reason"] = reason
-        logEvent(context, "toggle", fields)
+        if (opId != null) fields["op"] = opId
+        logEvent(context, "toggle", fields, opId = opId)
     }
 
     fun logStateUnknown(
         context: Context,
         reason: String,
-        detail: String = ""
+        detail: String = "",
+        opId: String? = null
     ) {
         val fields = mutableMapOf("reason" to reason)
         if (detail.isNotBlank()) fields["detail"] = detail
-        logEvent(context, "state_unknown", fields)
+        if (opId != null) fields["op"] = opId
+        logEvent(context, "state_unknown", fields, opId = opId)
     }
 
     fun logTileUpdate(
@@ -517,7 +706,8 @@ object TilePluginLog {
         sensorState: SensorPrivacyState,
         subtitle: String,
         label: String,
-        reason: String = ""
+        reason: String = "",
+        opId: String? = null
     ) {
         val stateName = when (tileState) {
             Tile.STATE_ACTIVE -> "STATE_ACTIVE"
@@ -532,16 +722,19 @@ object TilePluginLog {
             "label" to label
         )
         if (reason.isNotBlank()) fields["reason"] = reason
-        logEvent(context, "tile_update", fields)
+        if (opId != null) fields["op"] = opId
+        logEvent(context, "tile_update", fields, opId = opId)
     }
 
     fun clear(context: Context) {
         synchronized(fileLock) {
             try {
-                val file = getLogFile(context)
-                if (file.exists()) {
-                    file.delete()
-                }
+                val f0 = getLogFile(context)
+                val f1 = getLogFile1(context)
+                val f2 = getLogFile2(context)
+                if (f0.exists()) f0.delete()
+                if (f1.exists()) f1.delete()
+                if (f2.exists()) f2.delete()
             } catch (e: Exception) {
                 Log.w(TAG, "Failed deleting log file: ${e.message}")
             }
@@ -569,7 +762,7 @@ object TilePluginLog {
 
     /**
      * Retrieves companion logs from the ContentProvider if running in main app,
-     * with explicit error categorization.
+     * with explicit error categorization. Does not report IPC failure as plugin dead.
      */
     fun fetchCompanionLogsWithResult(context: Context): FetchResult {
         try {
@@ -579,7 +772,7 @@ object TilePluginLog {
                 null,
                 null,
                 null
-            ) ?: return FetchResult.Error("PROVIDER_UNAVAILABLE", "ContentProvider query returned null cursor (Companion not installed or provider not found)")
+            ) ?: return FetchResult.Error("PROVIDER_UNAVAILABLE", "ContentProvider query returned null cursor (Companion provider unavailable)")
 
             cursor.use { c ->
                 val list = mutableListOf<Entry>()
@@ -622,7 +815,8 @@ object TilePluginLog {
                             thread = thread,
                             session = sess,
                             fields = fieldsMap,
-                            rawMessage = ""
+                            rawMessage = "",
+                            opId = fieldsMap["op"]
                         )
                     )
                 }
@@ -633,7 +827,7 @@ object TilePluginLog {
             return FetchResult.Error("SECURITY_ERROR", "Permission denied accessing companion provider: ${e.message}")
         } catch (e: Exception) {
             Log.e(TAG, "ContentProvider query error: ${e.message}")
-            return FetchResult.Error("PROVIDER_ERROR", e.message ?: "Unknown error querying companion provider")
+            return FetchResult.Error("PROVIDER_UNAVAILABLE", e.message ?: "ContentProvider unavailable")
         }
     }
 
@@ -659,18 +853,22 @@ object TilePluginLog {
 
     /**
      * Executes an explicit end-to-end companion self-test:
-     * 1. Calls companion ContentProvider insert (TEST_LOG_URI)
+     * 1. Calls companion ContentProvider insert (TEST_LOG_URI) with ContentValues() (never null)
      * 2. Companion writes TEST_LOG_WRITE synchronously to disk
      * 3. Immediately queries the provider via fetchCompanionLogsWithResult()
      * 4. Verifies TEST_LOG_WRITE event is present in the returned list
      */
     fun performCompanionSelfTest(context: Context): SelfTestResult {
+        val cv = ContentValues()
+        cv.put("action", "test_log")
+        cv.put("timestamp", System.currentTimeMillis())
+
         val insertedUri = try {
-            context.contentResolver.insert(TEST_LOG_URI, null)
+            context.contentResolver.insert(TEST_LOG_URI, cv)
         } catch (e: SecurityException) {
             return SelfTestResult.InsertFailed("SECURITY_ERROR: ${e.message}")
         } catch (e: Exception) {
-            return SelfTestResult.InsertFailed("PROVIDER_ERROR: ${e.message ?: "Insert failed"}")
+            return SelfTestResult.InsertFailed("PROVIDER_UNAVAILABLE: ${e.message ?: "Insert failed"}")
         }
 
         if (insertedUri == null) {
@@ -694,11 +892,13 @@ object TilePluginLog {
     }
 
     /**
-     * Triggers companion to write a TEST_LOG_WRITE event via Provider.
+     * Triggers companion to write a TEST_LOG_WRITE event via Provider with valid ContentValues.
      */
     fun triggerCompanionTestLog(context: Context): Boolean {
         return try {
-            val uri = context.contentResolver.insert(TEST_LOG_URI, null)
+            val cv = ContentValues()
+            cv.put("action", "test_log")
+            val uri = context.contentResolver.insert(TEST_LOG_URI, cv)
             uri != null
         } catch (e: Exception) {
             Log.e(TAG, "Failed triggering test log write: ${e.message}")

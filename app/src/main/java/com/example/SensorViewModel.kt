@@ -67,6 +67,8 @@ data class SensorUiState(
     val isTileCompanionInstalled: Boolean = false,
     val companionVersionName: String? = null,
     val companionProviderInfo: CompanionInstaller.ProviderResolutionInfo? = null,
+    val companionValidation: CompanionInstaller.CompanionValidationResult = CompanionInstaller.CompanionValidationResult.NotInstalled,
+    val shizukuStatus: ShizukuManager.ShizukuStatus = ShizukuManager.ShizukuStatus.NOT_RUNNING,
     val sensorList: List<SensorItem> = listOf(
         SensorItem("camera", "Camera", "Hardware Sensor", false, "ic_camera"),
         SensorItem("mic", "Microphone", "Audio Input", false, "ic_mic"),
@@ -253,20 +255,24 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
                 iconStyle = tileIconStyle
             )
 
-            val isCompanionInstalled = CompanionInstaller.isCompanionInstalled(context)
-            val companionVersion = CompanionInstaller.getInstalledCompanionVersion(context)
+            val companionValidation = CompanionInstaller.validateCompanionPackage(context)
+            val isCompanionInstalled = companionValidation.isInstalled
+            val companionVersion = (companionValidation as? CompanionInstaller.CompanionValidationResult.Valid)?.versionName
             val providerInfo = CompanionInstaller.resolveCompanionLogProvider(context)
+            val detailedShizukuStatus = ShizukuManager.getDetailedShizukuStatus(context)
 
             _uiState.update { state ->
                 state.copy(
                     isShizukuInstalled = isInstalled,
                     isShizukuRunning = isRunning,
                     isShizukuAuthorized = isAuthorized,
+                    shizukuStatus = detailedShizukuStatus,
                     isRootAvailable = isRoot,
                     isSensorsOff = isOff,
                     isTileCompanionInstalled = isCompanionInstalled,
                     companionVersionName = companionVersion,
                     companionProviderInfo = providerInfo,
+                    companionValidation = companionValidation,
                     appThemeMode = themeMode,
                     appLauncherAlias = launcherAlias,
                     showExperimentalToggles = showExp,
@@ -449,6 +455,18 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun uninstallCompanion(context: Context, onResult: (Boolean, String) -> Unit) {
+        val result = CompanionInstaller.launchCompanionUninstallFlow(context)
+        if (result.isSuccess) {
+            addLog("Initiated companion APK package uninstaller flow", category = LogCategory.TILE, level = LogLevel.INFO)
+            onResult(true, "Launching Package Uninstaller...")
+        } else {
+            val errorMsg = result.exceptionOrNull()?.message ?: "Unknown error"
+            addLog("Companion APK uninstallation launch failed: $errorMsg", category = LogCategory.TILE, level = LogLevel.ERROR)
+            onResult(false, "Could not open package uninstaller: $errorMsg")
+        }
+    }
+
     fun openQuickSettings(context: Context) {
         addLog("Opening Quick Settings panel", category = LogCategory.TILE, level = LogLevel.INFO)
         CompanionInstaller.openQuickSettings(context)
@@ -564,9 +582,12 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
         val context = getApplication<Application>().applicationContext
         if (ShizukuManager.isShizukuRunning()) {
             if (!ShizukuManager.isShizukuAuthorized()) {
-                addLog("Requesting Shizuku authorization...", category = LogCategory.PRIVILEGE)
+                addLog("Requesting official Shizuku permission...", category = LogCategory.PRIVILEGE)
                 TileLogManager.logPrivilegeEvent(context, "Shizuku Auth Requested", "Prompting user for Shizuku IPC permission")
-                ShizukuManager.requestShizukuPermission()
+                val requested = ShizukuManager.requestShizukuPermissionOfficial()
+                if (!requested) {
+                    ShizukuManager.requestShizukuPermission()
+                }
             } else {
                 addLog("Shizuku is already authorized.", category = LogCategory.PRIVILEGE, level = LogLevel.SUCCESS)
             }
@@ -579,6 +600,10 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             delay(500)
             refreshState()
         }
+    }
+
+    fun requestShizukuPermissionOfficial() {
+        requestShizukuPermission()
     }
 
     fun launchShizukuApp() {

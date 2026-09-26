@@ -1,6 +1,8 @@
 package com.example.tile
 
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.database.ContentObserver
 import android.graphics.drawable.Icon
 import android.net.Uri
@@ -25,6 +27,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.util.Locale
 
 /**
  * Independent Quick Settings Tile Service for SensorsOff Companion APK.
@@ -32,7 +35,9 @@ import kotlinx.coroutines.withContext
  * - 100% Standalone APK process running completely independently of the main app
  * - Zero background daemons, zero polling, zero wake locks, zero persistent services
  * - Authoritative hardware state confirmation via ISensorPrivacyManager Binder transactions
- * - Recreates cleanly across process death and SystemUI unbinds
+ * - Pre-operation durability logging with unique click transaction IDs (opId)
+ * - Safe Shizuku permission verification without crashing or popping illegal dialogs
+ * - Clean teardown and process-death resilience
  */
 class SensorsOffTileService : TileService() {
 
@@ -252,7 +257,15 @@ class SensorsOffTileService : TileService() {
                     setTx = if (cachedBlockMode == "cam_mic") SensorPrivacyCodes.SET_TOGGLE_PRIVACY else SensorPrivacyCodes.getSetGlobalCodeForSdk(sdkInt)
                 )
 
-                val currentState = if (cachedBlockMode == "cam_mic") {
+                val currentState = if (!isShizukuAuthorized) {
+                    // Do not attempt unsafe UI; show UNKNOWN and log permission missing
+                    TilePluginLog.logStateUnknown(
+                        context = applicationContext,
+                        reason = if (isShizukuRunning) "SHIZUKU_PERMISSION_MISSING" else "SHIZUKU_NOT_RUNNING",
+                        detail = "Companion package permission: granted=$isShizukuAuthorized, running=$isShizukuRunning"
+                    )
+                    SensorPrivacyState.UNKNOWN
+                } else if (cachedBlockMode == "cam_mic") {
                     ShizukuManager.getCamMicCombinedState(applicationContext)
                 } else {
                     ShizukuManager.getSensorsOffState(applicationContext)
@@ -268,7 +281,7 @@ class SensorsOffTileService : TileService() {
                 val unknownReason = if (currentState == SensorPrivacyState.UNKNOWN) {
                     when {
                         !isShizukuRunning -> "SHIZUKU_NOT_RUNNING"
-                        !isShizukuAuthorized -> "SHIZUKU_PERMISSION_DENIED"
+                        !isShizukuAuthorized -> "SHIZUKU_PERMISSION_MISSING"
                         binder == null -> "SENSOR_PRIVACY_BINDER_UNAVAILABLE"
                         !isBinderAlive -> "SENSOR_PRIVACY_BINDER_DEAD"
                         txCode == null -> "UNSUPPORTED_API"
@@ -329,12 +342,18 @@ class SensorsOffTileService : TileService() {
         super.onClick()
         val clickTime = System.currentTimeMillis()
 
-        TilePluginLog.logTileServiceOnClick(applicationContext)
+        // Generate unique 6-character hex operation ID for this click session
+        val opId = String.format(Locale.US, "%06X", (clickTime xor (Thread.currentThread().id shl 16)) and 0xFFFFFF)
+
+        // Pre-operation durable logs (logged BEFORE running actions)
+        TilePluginLog.logTileServiceOnClick(applicationContext, opId = opId)
+        TilePluginLog.logLifecycle(applicationContext, "CLICK_OPERATION_STARTED", "op=$opId", opId = opId)
+
         TileLogManager.logLifecycleEvent(
             applicationContext,
             "CompanionTileService",
             "onClick",
-            "User tapped Quick Settings tile"
+            "User tapped Quick Settings tile (op=$opId)"
         )
 
         // Abort background listening query if running
@@ -346,44 +365,6 @@ class SensorsOffTileService : TileService() {
                 ShizukuManager.initialize(applicationContext)
                 reloadVisualConfig()
 
-                // 2. Read authoritative sensor privacy state directly from hardware/Binder (never guess from stale qsTile.state)
-                val authoritativeState = if (cachedBlockMode == "cam_mic") {
-                    ShizukuManager.getCamMicCombinedState(applicationContext)
-                } else {
-                    ShizukuManager.getSensorsOffState(applicationContext)
-                }
-
-                // 3. Determine target state strictly based on authoritative state
-                val target = when (authoritativeState) {
-                    SensorPrivacyState.ENABLED -> false // Currently enabled -> target is disabled (sensors on)
-                    SensorPrivacyState.DISABLED -> true // Currently disabled -> target is enabled (sensors off)
-                    SensorPrivacyState.UNKNOWN -> {
-                        // If state is UNKNOWN, do not guess target. Log and keep tile interactive.
-                        TilePluginLog.logStateUnknown(
-                            context = applicationContext,
-                            reason = "STATE_UNKNOWN",
-                            detail = "Touch detected but authoritative sensor state is UNKNOWN; keeping tile interactive"
-                        )
-                        TileLogManager.logTileEvent(
-                            applicationContext,
-                            "QS Tile Tap Warning",
-                            "Authoritative sensor state is UNKNOWN; skipping toggle to prevent unintended state change",
-                            LogLevel.WARN
-                        )
-                        withContext(Dispatchers.Main) {
-                            updateTileState(SensorPrivacyState.UNKNOWN)
-                        }
-                        return@withLock
-                    }
-                }
-
-                TilePluginLog.logTileClick(
-                    context = applicationContext,
-                    currentState = authoritativeState.name,
-                    requestedState = if (target) "ENABLED" else "DISABLED"
-                )
-
-                val executionStartTime = System.currentTimeMillis()
                 val isShizukuRunning = ShizukuManager.isShizukuRunning()
                 val isShizukuAuthorized = if (isShizukuRunning) ShizukuManager.isShizukuAuthorized() else false
                 val binder = ShizukuManager.getSensorPrivacyBinder()
@@ -391,7 +372,108 @@ class SensorsOffTileService : TileService() {
                 val sdkInt = Build.VERSION.SDK_INT
                 val setTxCode = if (cachedBlockMode == "cam_mic") SensorPrivacyCodes.SET_TOGGLE_PRIVACY else SensorPrivacyCodes.getSetGlobalCodeForSdk(sdkInt)
 
-                // 6. Perform toggle
+                // Log diagnostic checks with opId BEFORE execution
+                TilePluginLog.logShizukuCheck(
+                    context = applicationContext,
+                    running = isShizukuRunning,
+                    binderAlive = isBinderAlive,
+                    permissionGranted = isShizukuAuthorized,
+                    permissionCheckResult = if (isShizukuRunning) runCatching { rikka.shizuku.Shizuku.checkSelfPermission() }.getOrDefault(-1) else -1,
+                    binderStatus = if (binder != null) "ACQUIRED" else "UNAVAILABLE",
+                    opId = opId
+                )
+
+                TilePluginLog.logSensorPrivacyBinder(
+                    context = applicationContext,
+                    result = if (binder != null) "CONNECTED" else "UNAVAILABLE",
+                    binderAlive = isBinderAlive,
+                    api = sdkInt,
+                    readTx = if (cachedBlockMode == "cam_mic") SensorPrivacyCodes.IS_TOGGLE_PRIVACY else SensorPrivacyCodes.getQueryGlobalCodeForSdk(sdkInt),
+                    setTx = setTxCode,
+                    opId = opId
+                )
+
+                // 2. Read authoritative sensor privacy state directly from hardware/Binder (never guess from stale qsTile.state)
+                val authoritativeState = if (!isShizukuAuthorized) {
+                    SensorPrivacyState.UNKNOWN
+                } else if (cachedBlockMode == "cam_mic") {
+                    ShizukuManager.getCamMicCombinedState(applicationContext)
+                } else {
+                    ShizukuManager.getSensorsOffState(applicationContext)
+                }
+
+                TilePluginLog.logAuthoritativeStateRead(
+                    context = applicationContext,
+                    attempt = 1,
+                    shizukuStatus = if (isShizukuRunning && isShizukuAuthorized) "RUNNING_AND_AUTHORIZED" else if (isShizukuRunning) "RUNNING_UNAUTHORIZED" else "NOT_RUNNING",
+                    sensorBinderStatus = if (binder == null) "NULL" else if (isBinderAlive) "ALIVE" else "DEAD",
+                    api = sdkInt,
+                    transaction = if (cachedBlockMode == "cam_mic") SensorPrivacyCodes.IS_TOGGLE_PRIVACY else SensorPrivacyCodes.getQueryGlobalCodeForSdk(sdkInt),
+                    result = if (authoritativeState.isAuthoritative) "SUCCESS" else "FAILURE",
+                    finalState = authoritativeState.name,
+                    reason = if (!isShizukuAuthorized) "SHIZUKU_PERMISSION_MISSING" else null,
+                    opId = opId
+                )
+
+                // 3. Check for permission missing or UNKNOWN state
+                if (!isShizukuAuthorized || authoritativeState == SensorPrivacyState.UNKNOWN) {
+                    val reason = if (!isShizukuRunning) "SHIZUKU_NOT_RUNNING" else if (!isShizukuAuthorized) "SHIZUKU_PERMISSION_MISSING" else "STATE_UNKNOWN"
+
+                    TilePluginLog.logStateUnknown(
+                        context = applicationContext,
+                        reason = reason,
+                        detail = "Touch detected but authoritative sensor state is UNKNOWN / privilege missing (op=$opId)",
+                        opId = opId
+                    )
+                    TileLogManager.logTileEvent(
+                        applicationContext,
+                        "QS Tile Tap Warning",
+                        "Authoritative sensor state is UNKNOWN ($reason); skipping toggle to prevent unintended state change (op=$opId)",
+                        LogLevel.WARN
+                    )
+
+                    withContext(Dispatchers.Main) {
+                        updateTileState(SensorPrivacyState.UNKNOWN, opId = opId)
+                        // Provide a safe path through the main app to request permission
+                        if (!isShizukuAuthorized && isShizukuRunning) {
+                            try {
+                                val launchIntent = packageManager.getLaunchIntentForPackage("com.SensorsOff")
+                                if (launchIntent != null) {
+                                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    startActivityAndCollapse(launchIntent)
+                                }
+                            } catch (e: Exception) {
+                                Log.d(TAG, "Note launching main app from tile: ${e.message}")
+                            }
+                        }
+                    }
+                    return@withLock
+                }
+
+                // 4. Determine target state strictly based on authoritative state
+                val target = when (authoritativeState) {
+                    SensorPrivacyState.ENABLED -> false // Currently enabled -> target is disabled (sensors on)
+                    SensorPrivacyState.DISABLED -> true // Currently disabled -> target is enabled (sensors off)
+                    SensorPrivacyState.UNKNOWN -> return@withLock
+                }
+
+                TilePluginLog.logTileClick(
+                    context = applicationContext,
+                    currentState = authoritativeState.name,
+                    requestedState = if (target) "ENABLED" else "DISABLED",
+                    opId = opId
+                )
+
+                TilePluginLog.logLifecycle(
+                    context = applicationContext,
+                    eventName = "TOGGLE_REQUESTED",
+                    extraDetail = "target=${if (target) "ENABLED" else "DISABLED"}",
+                    opId = opId
+                )
+
+                val executionStartTime = System.currentTimeMillis()
+
+                // 5. Perform toggle
                 val success = if (cachedBlockMode == "cam_mic") {
                     ShizukuManager.setCamMicSensorState(applicationContext, target, skipNotify = true)
                 } else {
@@ -400,7 +482,14 @@ class SensorsOffTileService : TileService() {
 
                 val elapsedMs = System.currentTimeMillis() - executionStartTime
 
-                // 7. Perform authoritative read-back verification
+                TilePluginLog.logLifecycle(
+                    context = applicationContext,
+                    eventName = "TOGGLE_RESULT",
+                    extraDetail = "success=$success, elapsedMs=$elapsedMs",
+                    opId = opId
+                )
+
+                // 6. Perform authoritative read-back verification
                 val confirmedState = if (cachedBlockMode == "cam_mic") {
                     ShizukuManager.getCamMicCombinedState(applicationContext)
                 } else {
@@ -431,22 +520,31 @@ class SensorsOffTileService : TileService() {
                     setResult = if (success) "SUCCESS" else "FAILURE",
                     verification = verificationStatus,
                     finalState = confirmedState.name,
-                    reason = if (confirmedState == SensorPrivacyState.UNKNOWN) "STATE_READ_FAILED" else null
+                    reason = if (confirmedState == SensorPrivacyState.UNKNOWN) "STATE_READ_FAILED" else null,
+                    opId = opId
+                )
+
+                TilePluginLog.logLifecycle(
+                    context = applicationContext,
+                    eventName = "VERIFICATION_RESULT",
+                    extraDetail = "verification=$verificationStatus, confirmedState=${confirmedState.name}",
+                    opId = opId
                 )
 
                 if (confirmedState == SensorPrivacyState.UNKNOWN) {
                     TilePluginLog.logStateUnknown(
                         context = applicationContext,
                         reason = "TRANSACTION_FAILED",
-                        detail = "Post-toggle state verification returned UNKNOWN"
+                        detail = "Post-toggle state verification returned UNKNOWN (op=$opId)",
+                        opId = opId
                     )
                 }
 
                 TileLogManager.logTileEvent(
                     applicationContext,
-                    if (success) "Tile Toggle Completed" else "Tile Toggle Verification Warning",
-                    "Target: $target | Confirmed: $confirmedStateString | Success: $success | Elapsed: ${elapsedMs}ms | Total: ${System.currentTimeMillis() - clickTime}ms",
-                    if (success) LogLevel.SUCCESS else LogLevel.WARN,
+                    if (success && verificationStatus != "FAILED") "Tile Toggle Completed" else "Tile Toggle Verification Warning",
+                    "Target: $target | Confirmed: $confirmedStateString | Success: $success | Elapsed: ${elapsedMs}ms | Total: ${System.currentTimeMillis() - clickTime}ms | op=$opId",
+                    if (success && verificationStatus != "FAILED") LogLevel.SUCCESS else LogLevel.WARN,
                     executionMs = elapsedMs
                 )
 
@@ -454,23 +552,23 @@ class SensorsOffTileService : TileService() {
                     applicationContext,
                     lastState = confirmedStateString,
                     lastAction = if (success) {
-                        "Toggle to ${if (target) "ON" else "OFF"} (Result: $confirmedStateString)"
+                        "Toggle to ${if (target) "ON" else "OFF"} (Result: $confirmedStateString, op=$opId)"
                     } else {
-                        "Toggle to ${if (target) "ON" else "OFF"} Failed (State: $confirmedStateString)"
+                        "Toggle to ${if (target) "ON" else "OFF"} Failed (State: $confirmedStateString, op=$opId)"
                     },
                     lastLatencyMs = elapsedMs,
                     blockMode = cachedBlockMode
                 )
 
-                // 8. Update tile from the verified result
+                // 7. Update tile from the verified result
                 withContext(Dispatchers.Main) {
-                    updateTileState(confirmedState)
+                    updateTileState(confirmedState, opId = opId)
                 }
             }
         }
     }
 
-    private fun updateTileState(state: SensorPrivacyState) {
+    private fun updateTileState(state: SensorPrivacyState, opId: String? = null) {
         val tile = qsTile ?: return
 
         val targetState = when (state) {
@@ -496,7 +594,8 @@ class SensorsOffTileService : TileService() {
             sensorState = state,
             subtitle = targetSubtitle,
             label = cachedDisplayLabel,
-            reason = reason
+            reason = reason,
+            opId = opId
         )
 
         tile.state = targetState
