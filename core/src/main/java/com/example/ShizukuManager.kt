@@ -325,6 +325,40 @@ object ShizukuManager {
         }
     }
 
+    /**
+     * Proactively provisions Shizuku API permission (moe.shizuku.manager.permission.API_V23)
+     * to the standalone Quick Tile Companion APK (com.SensorsOff.tile) via privileged shell:
+     * `pm grant com.SensorsOff.tile moe.shizuku.manager.permission.API_V23`
+     * Supports execution via Shizuku shell or Root shell.
+     */
+    fun grantCompanionShizukuPrivilege(): Boolean {
+        val targetPackage = "com.SensorsOff.tile"
+        val perm = "moe.shizuku.manager.permission.API_V23"
+        val cmd = "pm grant $targetPackage $perm"
+
+        if (isShizukuAuthorized()) {
+            val result = executeShizukuInternalCommand(cmd, timeoutMs = 3000L)
+            if (result.success && result.exitCode == 0) {
+                Log.i(TAG, "Successfully granted Shizuku permission to companion ($targetPackage) via Shizuku shell")
+                return true
+            } else {
+                Log.d(TAG, "Shizuku pm grant companion returned code=${result.exitCode}: ${result.stderr}")
+            }
+        }
+
+        if (isRootAvailable()) {
+            val rootRes = executeRootInternalCommand(cmd, timeoutMs = 3000L)
+            if (rootRes.success && rootRes.exitCode == 0) {
+                Log.i(TAG, "Successfully granted Shizuku permission to companion ($targetPackage) via Root shell")
+                return true
+            } else {
+                Log.d(TAG, "Root pm grant companion returned code=${rootRes.exitCode}: ${rootRes.stderr}")
+            }
+        }
+
+        return false
+    }
+
     enum class RootState {
         UNKNOWN,
         AVAILABLE,

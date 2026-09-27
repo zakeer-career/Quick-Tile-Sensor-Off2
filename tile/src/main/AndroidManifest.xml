@@ -33,6 +33,13 @@
             android:authorities="com.SensorsOff.tile.logprovider"
             android:exported="true" />
 
+        <!-- Companion Direct Shizuku Permission Activity -->
+        <activity
+            android:name=".SensorsOffTilePermissionActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:excludeFromRecents="true"
+            android:exported="false" />
+
         <!-- Self-Contained Independent Quick Settings Tile Service -->
         <service
             android:name="com.example.tile.SensorsOffTileService"

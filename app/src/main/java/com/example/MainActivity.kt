@@ -224,6 +224,9 @@ fun SleekHomeTabContent(
                 onInstallCompanion = { onResult ->
                     viewModel.installCompanion(context, onResult)
                 },
+                onUninstallCompanion = { onResult ->
+                    viewModel.uninstallCompanion(context, onResult)
+                },
                 onOpenQuickSettings = {
                     viewModel.openQuickSettings(context)
                 }
@@ -614,11 +617,53 @@ fun SleekThemeSelectionCard(
 fun SleekTileCompanionCard(
     uiState: SensorUiState,
     onInstallCompanion: ((Boolean, String) -> Unit) -> Unit,
+    onUninstallCompanion: ((Boolean, String) -> Unit) -> Unit,
     onOpenQuickSettings: () -> Unit
 ) {
     val colors = LocalAppColors.current
     val context = LocalContext.current
     var isInstalling by remember { mutableStateOf(false) }
+    var showUninstallDialog by remember { mutableStateOf(false) }
+
+    if (showUninstallDialog) {
+        AlertDialog(
+            onDismissRequest = { showUninstallDialog = false },
+            title = {
+                Text(
+                    text = "Uninstall Companion",
+                    fontWeight = FontWeight.Bold,
+                    color = colors.textPrimary
+                )
+            },
+            text = {
+                Text(
+                    text = "Are you sure you want to uninstall the SensorsOff Quick Tile Companion (com.SensorsOff.tile)? This will remove the independent tile from Quick Settings.",
+                    color = colors.textSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUninstallDialog = false
+                        onUninstallCompanion { success, message ->
+                            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = colors.accentRose)
+                ) {
+                    Text("Uninstall", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUninstallDialog = false }) {
+                    Text("Cancel", color = colors.textSecondary)
+                }
+            },
+            containerColor = colors.cardBg,
+            shape = RoundedCornerShape(16.dp)
+        )
+    }
 
     Card(
         modifier = Modifier
@@ -737,28 +782,57 @@ fun SleekTileCompanionCard(
                     )
                 }
             } else {
-                Button(
-                    onClick = { onOpenQuickSettings() },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("open_quick_settings_button"),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = colors.accentGreen)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Widgets,
-                        contentDescription = "Open Quick Settings",
-                        modifier = Modifier.size(18.dp),
-                        tint = Color.White
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Open Quick Settings",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
-                    )
+                    Button(
+                        onClick = { onOpenQuickSettings() },
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(48.dp)
+                            .testTag("open_quick_settings_button"),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = colors.accentGreen)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Widgets,
+                            contentDescription = "Open Quick Settings",
+                            modifier = Modifier.size(18.dp),
+                            tint = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Quick Settings",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = { showUninstallDialog = true },
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("uninstall_companion_button"),
+                        shape = RoundedCornerShape(12.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, colors.accentRose.copy(alpha = 0.5f)),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.accentRose)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.DeleteOutline,
+                            contentDescription = "Uninstall Companion",
+                            modifier = Modifier.size(18.dp),
+                            tint = colors.accentRose
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "Uninstall",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colors.accentRose
+                        )
+                    }
                 }
             }
         }

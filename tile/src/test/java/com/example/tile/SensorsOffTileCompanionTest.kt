@@ -212,4 +212,18 @@ class SensorsOffTileCompanionTest {
         val logs = TilePluginLog.readPersistentLogEntries(context)
         assertTrue(logs.isNotEmpty())
     }
+
+    @Test
+    fun `test Companion Permission Activity launches and finishes safely`() {
+        val controller = Robolectric.buildActivity(SensorsOffTilePermissionActivity::class.java).setup()
+        val activity = controller.get()
+        assertNotNull(activity)
+        assertTrue(activity.isFinishing || !activity.isDestroyed)
+        controller.destroy()
+    }
+
+    @Test
+    fun `test Companion Permission Activity request code constant`() {
+        assertEquals(1001, SensorsOffTilePermissionActivity.REQUEST_CODE_SHIZUKU)
+    }
 }

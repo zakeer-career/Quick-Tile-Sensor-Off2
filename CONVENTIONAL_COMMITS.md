@@ -11,6 +11,46 @@ Each commit entry includes:
 
 ---
 
+### [v2.9.0] - 2026-09-26
+
+```git
+feat(tile): automate companion Shizuku provisioning, direct permission request, and in-app uninstallation flow
+
+Problem:
+1. When users installed the standalone Quick Tile Companion APK (com.SensorsOff.tile), Shizuku permissions were not granted to the companion package, even if the main app was already authorized with Shizuku.
+2. Tapping the companion tile in the Quick Settings shade while unprivileged caused the tile to revert to UNKNOWN state without providing an in-shade permission authorization dialog for the companion package.
+3. The main application lacked an in-app uninstallation action for the companion APK, requiring users to navigate deeply into system Settings to remove com.SensorsOff.tile.
+
+Root Cause:
+1. Shizuku evaluates permissions per UID/Package name; authorization granted to com.SensorsOff is isolated and does not cover com.SensorsOff.tile.
+2. The main app did not leverage its privileged shell access to run `pm grant com.SensorsOff.tile moe.shizuku.manager.permission.API_V23`.
+3. TileService cannot display permission dialogs directly due to the lack of an Activity window token.
+4. SleekTileCompanionCard only exposed an "Open Quick Settings" button when installed, omitting the uninstallation intent.
+
+Changes:
+- core/src/main/java/com/example/ShizukuManager.kt:
+  * Implemented grantCompanionShizukuPrivilege() to execute `pm grant com.SensorsOff.tile moe.shizuku.manager.permission.API_V23` via Shizuku shell or Root shell.
+- app/src/main/java/com/example/SensorViewModel.kt:
+  * Added proactive Shizuku privilege provisioning in refreshState() when companion is installed and main app has Shizuku or Root privilege.
+- tile/src/main/java/com/example/tile/SensorsOffTilePermissionActivity.kt:
+  * Created lightweight, transparent permission request Activity allowing companion package to invoke Shizuku.requestPermission(1001) directly from its own package context.
+- tile/src/main/AndroidManifest.xml:
+  * Declared SensorsOffTilePermissionActivity with Theme.Translucent.NoTitleBar.
+- tile/src/main/java/com/example/tile/SensorsOffTileService.kt:
+  * In onClick(), launched SensorsOffTilePermissionActivity when Shizuku is running but permission is missing, falling back to launching the main app.
+- app/src/main/java/com/example/MainActivity.kt:
+  * Passed onUninstallCompanion to SleekTileCompanionCard.
+  * Added "Uninstall" button and confirmation AlertDialog invoking CompanionInstaller.launchCompanionUninstallFlow().
+- tile/src/test/java/com/example/tile/SensorsOffTileCompanionTest.kt:
+  * Added unit tests for SensorsOffTilePermissionActivity lifecycle and REQUEST_CODE_SHIZUKU constant.
+
+Verification:
+- Module compilation succeeded for :app, :tile, and :core.
+- Zero background daemons, zero wake locks, zero persistent foreground services.
+```
+
+---
+
 ### [v2.8.9] - 2026-09-26
 
 ```git

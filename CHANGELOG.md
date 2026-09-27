@@ -6,6 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 
 ---
 
+## [2.9.0] - 2026-09-26
+
+### Robustness & Permission Release: Automatic Shizuku Provisioning, Direct Companion Permission Flow & In-App Uninstallation
+
+#### Problem Analysis
+- **Missing Shizuku Authorization for Standalone Companion Tile**:
+  - The Quick Tile Companion (`com.SensorsOff.tile`) is an independent APK package running in its own process.
+  - When users installed the companion tile, Shizuku permission was not automatically granted to `com.SensorsOff.tile`, even if the main app (`com.SensorsOff`) was already authorized with Shizuku.
+  - Tapping the companion tile in the Quick Settings shade when unprivileged showed an `UNKNOWN` state and collapsed without granting the user a direct in-shade method to grant Shizuku authorization specifically for the companion.
+- **Missing Package Uninstallation Flow in Main UI**:
+  - Users who installed the companion APK had no way within the SensorsOff app UI to initiate a clean, system-standard uninstallation of `com.SensorsOff.tile`.
+
+#### Root Cause
+1. **Per-Package Shizuku Permission Boundary**:
+   - Android and Shizuku isolate permissions per package ID. Authorizing `com.SensorsOff` did not automatically grant `moe.shizuku.manager.permission.API_V23` to `com.SensorsOff.tile`.
+2. **Missing Proactive Privilege Elevation IPC**:
+   - The main app did not leverage its authorized Shizuku shell or root shell to automatically execute `pm grant com.SensorsOff.tile moe.shizuku.manager.permission.API_V23` upon detecting an installed companion.
+3. **Missing Companion Activity for Permission Requests**:
+   - Calling `Shizuku.requestPermission()` from a `TileService` is prohibited by Android's windowing model because services lack window tokens for dialog display.
+4. **UI Affordance Absence**:
+   - `SleekTileCompanionCard` only surfaced an "Open Quick Settings" button when installed, without surfacing the existing `launchCompanionUninstallFlow()` uninstallation intent.
+
+#### Code Changes
+- `core/src/main/java/com/example/ShizukuManager.kt`:
+  - Implemented `grantCompanionShizukuPrivilege()` to proactively grant `moe.shizuku.manager.permission.API_V23` to `com.SensorsOff.tile` via Shizuku shell (`pm grant`) or fallback Root shell.
+- `app/src/main/java/com/example/SensorViewModel.kt`:
+  - Hooked proactive companion Shizuku provisioning into `refreshState()` whenever the companion is installed and the main app is privileged.
+- `tile/src/main/java/com/example/tile/SensorsOffTilePermissionActivity.kt`:
+  - Created a transparent, lightweight permission activity enabling the companion APK to directly trigger official `Shizuku.requestPermission(1001)` from its own package context.
+- `tile/src/main/AndroidManifest.xml`:
+  - Registered `SensorsOffTilePermissionActivity` with `android:theme="@android:style/Theme.Translucent.NoTitleBar"`, `android:excludeFromRecents="true"`, and `android:exported="false"`.
+- `tile/src/main/java/com/example/tile/SensorsOffTileService.kt`:
+  - Updated `onClick()`: When the tile is tapped and Shizuku is running without companion authorization, directly launches `SensorsOffTilePermissionActivity` via `startActivityAndCollapse()` with fallback to the main app.
+- `app/src/main/java/com/example/MainActivity.kt`:
+  - Wired `onUninstallCompanion` in `SleekTileCompanionCard`.
+  - Added an "Uninstall Companion" button with confirmation `AlertDialog` calling `CompanionInstaller.launchCompanionUninstallFlow()`.
+- `tile/src/test/java/com/example/tile/SensorsOffTileCompanionTest.kt`:
+  - Added test coverage for `SensorsOffTilePermissionActivity` initialization, lifecycle teardown, and request code constants.
+
+#### Telemetry & Verification
+- Test Suite: All unit tests in `:tile:testDebugUnitTest` and `:app:testDebugUnitTest` validated.
+- Compilation: Clean build across all modules (:app, :tile, :core).
+- Architecture: Zero persistent services, zero wake locks, zero background daemons.
+
+---
+
 ## [2.8.9] - 2026-09-26
 
 ### Architecture & Resilience Release: Non-Active SystemUI Tile Binding, Authoritative State Verification & Process-Death Decoupling

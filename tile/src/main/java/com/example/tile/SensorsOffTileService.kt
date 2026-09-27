@@ -434,16 +434,24 @@ class SensorsOffTileService : TileService() {
 
                     withContext(Dispatchers.Main) {
                         updateTileState(SensorPrivacyState.UNKNOWN, opId = opId)
-                        // Provide a safe path through the main app to request permission
+                        // Directly launch companion transparent permission activity to request Shizuku authorization
                         if (!isShizukuAuthorized && isShizukuRunning) {
                             try {
-                                val launchIntent = packageManager.getLaunchIntentForPackage("com.SensorsOff")
-                                if (launchIntent != null) {
-                                    launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                    startActivityAndCollapse(launchIntent)
+                                val permIntent = Intent(applicationContext, SensorsOffTilePermissionActivity::class.java).apply {
+                                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 }
+                                startActivityAndCollapse(permIntent)
                             } catch (e: Exception) {
-                                Log.d(TAG, "Note launching main app from tile: ${e.message}")
+                                Log.d(TAG, "Note launching companion permission activity: ${e.message}")
+                                try {
+                                    val launchIntent = packageManager.getLaunchIntentForPackage("com.SensorsOff")
+                                    if (launchIntent != null) {
+                                        launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                        startActivityAndCollapse(launchIntent)
+                                    }
+                                } catch (e2: Exception) {
+                                    Log.d(TAG, "Note launching main app from tile: ${e2.message}")
+                                }
                             }
                         }
                     }

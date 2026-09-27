@@ -261,6 +261,11 @@ class SensorViewModel(application: Application) : AndroidViewModel(application) 
             val providerInfo = CompanionInstaller.resolveCompanionLogProvider(context)
             val detailedShizukuStatus = ShizukuManager.getDetailedShizukuStatus(context)
 
+            // Proactively provision Shizuku permission to companion package if installed and privileged
+            if (isCompanionInstalled && (isAuthorized || isRoot)) {
+                ShizukuManager.grantCompanionShizukuPrivilege()
+            }
+
             _uiState.update { state ->
                 state.copy(
                     isShizukuInstalled = isInstalled,
